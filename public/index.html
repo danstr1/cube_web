@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Shell System</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="background-container"></div>
+    <img src="images/background.jpg" alt="" class="background-image" onerror="this.style.display='none'">
+    <div class="animated-bg">
+        <div class="grid-lines"></div>
+    </div>
+
+    <div class="clock-container">
+        <div class="clock" id="clock">00:00:00</div>
+        <div class="date" id="date"></div>
+    </div>
+
+    <div class="main-container">
+        <div class="card">
+            <h1 class="card-title">Web Shell System</h1>
+            
+            <div style="text-align: center; margin-bottom: 30px;">
+                <p style="color: var(--text-muted); margin-bottom: 20px;">ברוכים הבאים למערכת Web Shell</p>
+                <p style="color: var(--text-muted);">בחר את סוג המערכת:</p>
+            </div>
+
+            <div class="action-buttons" style="flex-direction: column; gap: 20px;">
+                <a href="#" onclick="goToHive(); return false;" class="btn btn-primary" style="text-decoration: none;">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <rect x="7" y="7" width="3" height="3"></rect>
+                        <rect x="14" y="7" width="3" height="3"></rect>
+                        <rect x="7" y="14" width="3" height="3"></rect>
+                        <rect x="14" y="14" width="3" height="3"></rect>
+                    </svg>
+                    מערכת כוורת (Hive)
+                </a>
+                <a href="/screen" class="btn btn-success" style="text-decoration: none;">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                        <line x1="8" y1="21" x2="16" y2="21"></line>
+                        <line x1="12" y1="17" x2="12" y2="21"></line>
+                    </svg>
+                    מערכת משתמש (User)
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/common.js"></script>
+    <script>
+        async function goToHive() {
+            try {
+                // Fetch available hives
+                const hives = await apiGet('/api/hives');
+                
+                if (!hives || hives.length === 0) {
+                    alert('לא נמצאו כוורות במערכת');
+                    return;
+                }
+                
+                // Get default hive ID (first hive)
+                const defaultHiveId = hives[0].id;
+                
+                // Prompt user for hive ID
+                const hiveId = prompt(`הזן מספר כוורת (ברירת מחדל: ${defaultHiveId})`, defaultHiveId);
+                
+                if (hiveId !== null && hiveId !== '') {
+                    // Navigate to hive with selected ID
+                    window.location.href = `/box?id=${encodeURIComponent(hiveId)}`;
+                }
+            } catch (error) {
+                console.error('Error fetching hives:', error);
+                // Fallback to ID 1
+                const hiveId = prompt('הזן מספר כוורת', '1');
+                if (hiveId !== null && hiveId !== '') {
+                    window.location.href = `/box?id=${encodeURIComponent(hiveId)}`;
+                }
+            }
+        }
+    </script>
+</body>
+</html>

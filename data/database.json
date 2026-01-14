@@ -1,0 +1,93 @@
+{
+  "settings": {
+    "backgroundImage": "images/background.jpg",
+    "currentHive": 2,
+    "timeoutSeconds": 10
+  },
+  "admins": [
+    {
+      "id": "99999",
+      "name": "Admin"
+    },
+    {
+      "id": "3059832319",
+      "name": "דן"
+    }
+  ],
+  "hives": [
+    {
+      "id": 1,
+      "name": "כוורת 1"
+    },
+    {
+      "id": 2,
+      "name": "כוורת 2"
+    }
+  ],
+  "boxes": [
+    {
+      "id": 1,
+      "hiveId": 1,
+      "boxNumber": 1,
+      "ipAddress": "10.1.1.1",
+      "status": "free"
+    },
+    {
+      "id": 3,
+      "hiveId": 1,
+      "boxNumber": 3,
+      "ipAddress": "10.1.1.3",
+      "status": "free"
+    },
+    {
+      "id": 4,
+      "hiveId": 1,
+      "boxNumber": 4,
+      "ipAddress": "10.1.1.4",
+      "status": "free"
+    },
+    {
+      "id": 5,
+      "hiveId": 1,
+      "boxNumber": 5,
+      "ipAddress": "10.1.1.5",
+      "status": "free"
+    },
+    {
+      "id": 6,
+      "hiveId": 1,
+      "boxNumber": 6,
+      "ipAddress": "10.1.1.6",
+      "status": "free"
+    },
+    {
+      "id": 7,
+      "hiveId": 1,
+      "boxNumber": 2,
+      "ipAddress": "10.1.1.2",
+      "status": "free"
+    },
+    {
+      "id": 8,
+      "hiveId": 2,
+      "boxNumber": 1,
+      "ipAddress": "10.1.2.1",
+      "status": "free"
+    },
+    {
+      "id": 9,
+      "hiveId": 2,
+      "boxNumber": 2,
+      "ipAddress": "10.1.2.2",
+      "status": "free"
+    }
+  ],
+  "users": [],
+  "identityMappings": [
+    {
+      "id": "3059832319",
+      "name": "דן"
+    }
+  ],
+  "usageStats": []
+}

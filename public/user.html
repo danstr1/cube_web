@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>מערכת משתמש - Web Shell</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="background-container"></div>
+    <img src="images/background.jpg" alt="" class="background-image" onerror="this.style.display='none'">
+    <div class="animated-bg">
+        <div class="grid-lines"></div>
+    </div>
+
+    <div class="clock-container">
+        <div class="clock" id="clock">00:00:00</div>
+        <div class="date" id="date"></div>
+    </div>
+
+    <div class="screen-title">מסך משתמש</div>
+
+    <div class="main-container">
+        <!-- Login Screen -->
+        <div class="card" id="loginScreen">
+            <h1 class="card-title">התחברות למערכת</h1>
+
+            <div class="input-display" id="inputDisplay">
+                <span id="inputValue"></span>
+                <span class="cursor" style="animation: blink 1s infinite;">|</span>
+            </div>
+
+            <div class="keypad" id="keypad">
+                <button class="key" data-digit="1">1</button>
+                <button class="key" data-digit="2">2</button>
+                <button class="key" data-digit="3">3</button>
+                <button class="key" data-digit="4">4</button>
+                <button class="key" data-digit="5">5</button>
+                <button class="key" data-digit="6">6</button>
+                <button class="key" data-digit="7">7</button>
+                <button class="key" data-digit="8">8</button>
+                <button class="key" data-digit="9">9</button>
+                <button class="key delete" data-action="delete">⌫</button>
+                <button class="key" data-digit="0">0</button>
+                <button class="key enter" data-action="enter" style="grid-column: span 3;">אישור ⏎</button>
+            </div>
+
+            <p style="text-align: center; color: var(--text-muted); font-size: 0.9rem;">
+                הזן את מספר הזיהוי שלך או העבר את התג
+            </p>
+        </div>
+
+        <!-- Connected Screen -->
+        <div class="card hidden" id="connectedScreen">
+            <div class="welcome-message" id="welcomeMessage"></div>
+            
+            <div class="box-info">
+                <div class="box-label">אתה מחובר לתא מספר</div>
+                <div class="box-number" id="boxNumber"></div>
+                <div class="ip-address" id="ipAddress"></div>
+            </div>
+
+            <div class="action-buttons" style="flex-direction: column; gap: 15px;">
+                <a href="#" id="connectLink" class="btn btn-success" target="_blank" style="text-decoration: none;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                        <polyline points="15 3 21 3 21 9"></polyline>
+                        <line x1="10" y1="14" x2="21" y2="3"></line>
+                    </svg>
+                    התחבר לתא
+                </a>
+                
+                <button class="btn btn-warning" onclick="disconnectSession()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                        <polyline points="16 17 21 12 16 7"></polyline>
+                        <line x1="21" y1="12" x2="9" y2="12"></line>
+                    </svg>
+                    התנתק מהמערכת (נשאר רשום)
+                </button>
+                
+                <button class="btn btn-danger" onclick="releaseBox()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="15" y1="9" x2="9" y2="15"></line>
+                        <line x1="9" y1="9" x2="15" y2="15"></line>
+                    </svg>
+                    יציאה מהמערכת (שחרור התא)
+                </button>
+            </div>
+        </div>
+
+        <!-- Not Found Screen -->
+        <div class="card hidden" id="notFoundScreen">
+            <div class="status-message error">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-bottom: 15px;">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+                <h2 style="margin-bottom: 10px;">לא נמצא מיפוי</h2>
+                <p>המזהה שהזנת אינו רשום במערכת.</p>
+                <p style="margin-top: 10px; font-size: 0.9rem;">אנא גש לאחת הכוורות והזן מזהה</p>
+            </div>
+
+            <div class="action-buttons">
+                <button class="btn btn-primary" onclick="backToLogin()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="19" y1="12" x2="5" y2="12"></line>
+                        <polyline points="12 19 5 12 12 5"></polyline>
+                    </svg>
+                    חזור לכניסה
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/common.js"></script>
+    <script src="js/user.js"></script>
+</body>
+</html>
