@@ -93,7 +93,7 @@ if __name__ == "__main__":
                             return reject(err);
                         }
                         
-                        stream.on('close', (code) => {
+                        stream.on('exit', (code) => {
                             console.log(`Password file saved. Exit code: ${code}`);
                             
                             // Step 3: Run the Python script
@@ -111,7 +111,7 @@ if __name__ == "__main__":
                                     console.log('Script output:', data.toString());
                                 });
                                 
-                                stream.on('close', (code) => {
+                                stream.on('exit', (code) => {
                                     console.log(`Python script completed. Exit code: ${code}`);
                                     console.log('Full output:', output);
                                     
@@ -129,7 +129,7 @@ if __name__ == "__main__":
                                             restartOutput += data.toString();
                                         });
                                         
-                                        stream.on('close', (code) => {
+                                        stream.on('exit', (code) => {
                                             console.log(`Services restart completed. Exit code: ${code}`);
                                             if (restartOutput) console.log('Restart output:', restartOutput);
                                             conn.end();
