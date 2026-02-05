@@ -55,85 +55,99 @@ if __name__ == "__main__":
         conn.on('ready', () => {
             console.log(`SSH connected to ${ipAddress}`);
             
-            // Use base64 encoding to avoid shell escaping issues
-            const base64Script = Buffer.from(pythonScript).toString('base64');
-            const writeScriptCmd = `echo '${base64Script}' | base64 -d > /tmp/change_password.py`;
-            
-            console.log('Writing Python script...');
-            conn.exec(writeScriptCmd, (err, stream) => {
+            // First, ensure filesystem is writable
+            console.log('Setting filesystem to read-write mode...');
+            conn.exec('rw', (err, stream) => {
                 if (err) {
-                    console.error('Error writing script:', err);
+                    console.error('Error setting rw mode:', err);
                     conn.end();
                     return reject(err);
                 }
                 
-                let writeOutput = '';
-                let writeError = '';
-                
-                stream.on('data', (data) => {
-                    writeOutput += data.toString();
-                });
-                
-                stream.stderr.on('data', (data) => {
-                    writeError += data.toString();
-                });
-                
-                stream.on('close', (code) => {
-                    console.log(`Script write completed. Exit code: ${code}`);
-                    if (writeError) console.log('Write stderr:', writeError);
+                stream.on('exit', (code) => {
+                    console.log(`Filesystem set to rw mode. Exit code: ${code}`);
                     
-                    // Step 2: Save the password to a temp file
-                    const savePasswordCmd = `echo '${newPassword}' > /tmp/current_password.txt`;
+                    // Use base64 encoding to avoid shell escaping issues
+                    const base64Script = Buffer.from(pythonScript).toString('base64');
+                    const writeScriptCmd = `echo '${base64Script}' | base64 -d > /tmp/change_password.py`;
                     
-                    console.log('Saving password to file...');
-                    conn.exec(savePasswordCmd, (err, stream) => {
+                    console.log('Writing Python script...');
+                    conn.exec(writeScriptCmd, (err, stream) => {
                         if (err) {
-                            console.error('Error saving password:', err);
+                            console.error('Error writing script:', err);
                             conn.end();
                             return reject(err);
                         }
                         
-                        stream.on('exit', (code) => {
-                            console.log(`Password file saved. Exit code: ${code}`);
+                        let writeOutput = '';
+                        let writeError = '';
+                        
+                        stream.on('data', (data) => {
+                            writeOutput += data.toString();
+                        });
+                        
+                        stream.stderr.on('data', (data) => {
+                            writeError += data.toString();
+                        });
+                        
+                        stream.on('close', (code) => {
+                            console.log(`Script write completed. Exit code: ${code}`);
+                            if (writeError) console.log('Write stderr:', writeError);
                             
-                            // Step 3: Run the Python script
-                            console.log('Running Python script...');
-                            conn.exec('python3 /tmp/change_password.py 2>&1', (err, stream) => {
+                            // Step 2: Save the password to a temp file
+                            const savePasswordCmd = `echo '${newPassword}' > /tmp/current_password.txt`;
+                            
+                            console.log('Saving password to file...');
+                            conn.exec(savePasswordCmd, (err, stream) => {
                                 if (err) {
-                                    console.error('Error running script:', err);
+                                    console.error('Error saving password:', err);
                                     conn.end();
                                     return reject(err);
                                 }
                                 
-                                let output = '';
-                                stream.on('data', (data) => {
-                                    output += data.toString();
-                                    console.log('Script output:', data.toString());
-                                });
-                                
                                 stream.on('exit', (code) => {
-                                    console.log(`Python script completed. Exit code: ${code}`);
-                                    console.log('Full output:', output);
+                                    console.log(`Password file saved. Exit code: ${code}`);
                                     
-                                    // Step 4: Restart kvmd services
-                                    console.log('Restarting kvmd services...');
-                                    conn.exec('systemctl restart kvmd kvmd-nginx 2>&1', (err, stream) => {
+                                    // Step 3: Run the Python script
+                                    console.log('Running Python script...');
+                                    conn.exec('python3 /tmp/change_password.py 2>&1', (err, stream) => {
                                         if (err) {
-                                            console.error('Error restarting services:', err);
+                                            console.error('Error running script:', err);
                                             conn.end();
                                             return reject(err);
                                         }
                                         
-                                        let restartOutput = '';
+                                        let output = '';
                                         stream.on('data', (data) => {
-                                            restartOutput += data.toString();
+                                            output += data.toString();
+                                            console.log('Script output:', data.toString());
                                         });
                                         
                                         stream.on('exit', (code) => {
-                                            console.log(`Services restart completed. Exit code: ${code}`);
-                                            if (restartOutput) console.log('Restart output:', restartOutput);
-                                            conn.end();
-                                            resolve({ success: true, password: newPassword });
+                                            console.log(`Python script completed. Exit code: ${code}`);
+                                            console.log('Full output:', output);
+                                            
+                                            // Step 4: Restart kvmd services
+                                            console.log('Restarting kvmd services...');
+                                            conn.exec('systemctl restart kvmd kvmd-nginx 2>&1', (err, stream) => {
+                                                if (err) {
+                                                    console.error('Error restarting services:', err);
+                                                    conn.end();
+                                                    return reject(err);
+                                                }
+                                                
+                                                let restartOutput = '';
+                                                stream.on('data', (data) => {
+                                                    restartOutput += data.toString();
+                                                });
+                                                
+                                                stream.on('exit', (code) => {
+                                                    console.log(`Services restart completed. Exit code: ${code}`);
+                                                    if (restartOutput) console.log('Restart output:', restartOutput);
+                                                    conn.end();
+                                                    resolve({ success: true, password: newPassword });
+                                                });
+                                            });
                                         });
                                     });
                                 });
