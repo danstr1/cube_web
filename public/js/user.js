@@ -241,30 +241,61 @@ function setupConnectLink() {
         showLoadingModal();
         
         try {
-            // Step 1: Generate password
+            // Step 1: Generate password (instant - visual only)
             updateLoadingStep(1, 'active');
-            await delay(500);
-            
-            // Step 2: Update remote system (this calls the API)
+            updateProgress(5);
+            await delay(300);
             updateLoadingStep(1, 'completed');
-            updateLoadingStep(2, 'active');
             
-            const result = await apiPost('/api/pikvm/connect', {
+            // Step 2: Connecting to remote system
+            updateLoadingStep(2, 'active');
+            updateProgress(15);
+            
+            // Start the API call and animate steps while waiting
+            const apiPromise = apiPost('/api/pikvm/connect', {
                 ipAddress: currentBox.ipAddress
             });
+            
+            // Animate through steps 2-5 while API is running
+            await delay(800);
+            updateLoadingStep(2, 'completed');
+            updateProgress(25);
+            
+            // Step 3: Enable write mode
+            updateLoadingStep(3, 'active');
+            await delay(600);
+            updateLoadingStep(3, 'completed');
+            updateProgress(40);
+            
+            // Step 4: Updating password
+            updateLoadingStep(4, 'active');
+            await delay(1000);
+            updateLoadingStep(4, 'completed');
+            updateProgress(55);
+            
+            // Step 5: Restarting services
+            updateLoadingStep(5, 'active');
+            await delay(800);
+            
+            // Now wait for the API to complete
+            const result = await apiPromise;
             
             if (!result || !result.success) {
                 throw new Error(result?.message || 'Failed to change password');
             }
             
-            // Step 3: Restart services (already done on server)
-            updateLoadingStep(2, 'completed');
-            updateLoadingStep(3, 'active');
-            await delay(2000);
-            updateLoadingStep(3, 'completed');
+            updateLoadingStep(5, 'completed');
+            updateProgress(70);
             
-            // Step 4: Redirect
-            updateLoadingStep(4, 'active');
+            // Step 6: Waiting for system availability
+            updateLoadingStep(6, 'active');
+            await delay(1500);
+            updateLoadingStep(6, 'completed');
+            updateProgress(85);
+            
+            // Step 7: Redirect
+            updateLoadingStep(7, 'active');
+            updateProgress(95);
             
             // Show the password
             passwordDisplay.textContent = result.password;
@@ -273,8 +304,11 @@ function setupConnectLink() {
             loadingTitle.textContent = 'מעביר אותך למערכת...';
             loadingMessage.textContent = 'החיבור מוכן, מפנה אותך כעת';
             
-            await delay(1500);
-            updateLoadingStep(4, 'completed');
+            await delay(800);
+            updateLoadingStep(7, 'completed');
+            updateProgress(100);
+            
+            await delay(500);
             
             // Auto-submit the form to redirect
             redirectToPiKVM(currentBox.ipAddress, result.password);
@@ -298,13 +332,24 @@ function showLoadingModal() {
     loadingMessage.textContent = 'אנא המתן, המערכת מכינה את החיבור שלך';
     loadingPassword.classList.add('hidden');
     
-    // Reset all steps
-    for (let i = 1; i <= 4; i++) {
+    // Reset progress bar
+    updateProgress(0);
+    
+    // Reset all steps (now 7 steps)
+    for (let i = 1; i <= 7; i++) {
         const step = document.getElementById(`step${i}`);
         if (step) {
             step.classList.remove('active', 'completed');
             step.querySelector('.step-icon').textContent = '⏳';
         }
+    }
+}
+
+// Update progress bar
+function updateProgress(percent) {
+    const progressBar = document.getElementById('progressBar');
+    if (progressBar) {
+        progressBar.style.width = percent + '%';
     }
 }
 

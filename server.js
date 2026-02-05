@@ -43,9 +43,9 @@ def automate():
     else:
         time.sleep(1)
         os.write(fd, (PASSWORD + "\\n").encode())
-        time.sleep(1)
+        time.sleep(0.5)
         os.write(fd, (PASSWORD + "\\n").encode())
-        time.sleep(1)
+        time.sleep(0.5)
         print("Password changed successfully.")
 
 if __name__ == "__main__":
@@ -697,8 +697,8 @@ app.post('/api/pikvm/connect', async (req, res) => {
         // SSH into the machine and change password
         await changePiKVMPassword(ipAddress, newPassword);
         
-        // Wait a bit for services to restart
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Brief wait for services to start restarting
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
         res.json({
             success: true,
