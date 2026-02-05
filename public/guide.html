@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>מדריך התקנה - PiKVM</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        :root {
+            --primary-color: #3498db;
+            --primary-dark: #2980b9;
+            --secondary-color: #2ecc71;
+            --danger-color: #e74c3c;
+            --warning-color: #f39c12;
+            --dark-bg: #1a1a2e;
+            --darker-bg: #16213e;
+            --card-bg: rgba(255, 255, 255, 0.1);
+            --text-light: #ffffff;
+            --text-muted: rgba(255, 255, 255, 0.7);
+            --border-radius: 12px;
+            --code-bg: #0d1117;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, var(--dark-bg) 0%, var(--darker-bg) 100%);
+            color: var(--text-light);
+            min-height: 100vh;
+            direction: rtl;
+            line-height: 1.8;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 15px;
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.2rem;
+        }
+
+        .toc {
+            background: var(--card-bg);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: var(--border-radius);
+            padding: 25px 30px;
+            margin-bottom: 40px;
+        }
+
+        .toc h2 {
+            font-size: 1.3rem;
+            margin-bottom: 15px;
+            color: var(--primary-color);
+        }
+
+        .toc ul {
+            list-style: none;
+        }
+
+        .toc li {
+            margin: 10px 0;
+        }
+
+        .toc a {
+            color: var(--text-light);
+            text-decoration: none;
+            transition: color 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .toc a:hover {
+            color: var(--primary-color);
+        }
+
+        .toc .number {
+            background: var(--primary-color);
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+            font-weight: bold;
+        }
+
+        .section {
+            background: var(--card-bg);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: var(--border-radius);
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+
+        .section h2 {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid var(--primary-color);
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .section h2 .icon {
+            font-size: 1.8rem;
+        }
+
+        .section h3 {
+            font-size: 1.2rem;
+            margin: 25px 0 15px;
+            color: var(--secondary-color);
+        }
+
+        .step {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+            border-right: 4px solid var(--primary-color);
+        }
+
+        .step-number {
+            background: var(--primary-color);
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-left: 12px;
+        }
+
+        .step-title {
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+        }
+
+        code {
+            background: var(--code-bg);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.95rem;
+            direction: ltr;
+            display: inline-block;
+        }
+
+        pre {
+            background: var(--code-bg);
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 15px 0;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            direction: ltr;
+            text-align: left;
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .warning {
+            background: rgba(243, 156, 18, 0.2);
+            border: 1px solid var(--warning-color);
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin: 15px 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 15px;
+        }
+
+        .warning-icon {
+            font-size: 1.5rem;
+        }
+
+        .info {
+            background: rgba(52, 152, 219, 0.2);
+            border: 1px solid var(--primary-color);
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin: 15px 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 15px;
+        }
+
+        .info-icon {
+            font-size: 1.5rem;
+        }
+
+        .success {
+            background: rgba(46, 204, 113, 0.2);
+            border: 1px solid var(--secondary-color);
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin: 15px 0;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-muted);
+            text-decoration: none;
+            margin-bottom: 20px;
+            transition: color 0.3s;
+        }
+
+        .back-link:hover {
+            color: var(--primary-color);
+        }
+
+        .copy-btn {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            margin-top: 10px;
+            transition: background 0.3s;
+        }
+
+        .copy-btn:hover {
+            background: var(--primary-dark);
+        }
+
+        .copy-btn.copied {
+            background: var(--secondary-color);
+        }
+
+        footer {
+            text-align: center;
+            padding: 30px;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-link">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            חזרה לדף הראשי
+        </a>
+
+        <header>
+            <h1>🛠️ מדריך התקנה והגדרות</h1>
+            <p class="subtitle">מדריך מפורט להתקנה והגדרת מערכת PiKVM</p>
+        </header>
+
+        <nav class="toc">
+            <h2>📑 תוכן עניינים</h2>
+            <ul>
+                <li>
+                    <a href="#edid">
+                        <span class="number">1</span>
+                        תיקון EDID (הגדרות מסך)
+                    </a>
+                </li>
+                <!-- Add more items here as needed -->
+            </ul>
+        </nav>
+
+        <!-- Section 1: EDID Fix -->
+        <section class="section" id="edid">
+            <h2>
+                <span class="icon">🖥️</span>
+                תיקון EDID (הגדרות מסך)
+            </h2>
+            
+            <p>
+                EDID (Extended Display Identification Data) הוא מידע שהמסך שולח למחשב כדי לזהות את עצמו.
+                לפעמים יש צורך להגדיר EDID מותאם אישית כדי לפתור בעיות תצוגה.
+            </p>
+
+            <div class="warning">
+                <span class="warning-icon">⚠️</span>
+                <div>
+                    <strong>שים לב:</strong> יש לבצע את הפעולות הבאות בזהירות. 
+                    ודא שאתה מחובר ל-PiKVM הנכון לפני ביצוע שינויים.
+                </div>
+            </div>
+
+            <h3>שלבי הביצוע:</h3>
+
+            <div class="step">
+                <div class="step-title">
+                    <span class="step-number">1</span>
+                    התחברות ל-PiKVM באמצעות SSH
+                </div>
+                <p>פתח טרמינל והתחבר למכשיר:</p>
+                <pre><code>ssh root@[IP_ADDRESS]</code></pre>
+                <p>הסיסמה המוגדרת כברירת מחדל היא: <code>root</code></p>
+            </div>
+
+            <div class="step">
+                <div class="step-title">
+                    <span class="step-number">2</span>
+                    הפעלת מצב כתיבה
+                </div>
+                <p>מערכת הקבצים של PiKVM היא לקריאה בלבד כברירת מחדל. יש להפעיל מצב כתיבה:</p>
+                <pre><code>rw</code></pre>
+                
+                <div class="info">
+                    <span class="info-icon">💡</span>
+                    <div>
+                        <strong>טיפ:</strong> לאחר סיום העריכות, ניתן לחזור למצב קריאה בלבד עם הפקודה <code>ro</code>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-title">
+                    <span class="step-number">3</span>
+                    כתיבת קובץ EDID
+                </div>
+                <p>העתק והדבק את הפקודה הבאה כדי ליצור את קובץ ה-EDID:</p>
+                <pre><code id="edid-command">echo '00FFFFFFFFFFFF0010AC132045393639
+201E0103803C22782ACD25A3574B9F27
+0D5054A54B00714F8180A9C0D1C00101
+010101010101023A801871382D40582C
+450056502100001E000000FF00335335
+475132330A2020202020000000FC0044
+454C4C204432373231480A20000000FD
+00384C1E5311000A2020202020200181
+02031AB14F9005040302071601061112
+1513141F65030C001000023A80187138
+2D40582C450056502100001E011D8018
+711C1620582C250056502100009E011D
+007251D01E206E28550056502100001E
+8C0AD08A20E02D10103E960056502100
+00180000000000000000000000000000
+0000000000000000000000000000004F' > /etc/kvmd/tc358743-edid.hex</code></pre>
+                <button class="copy-btn" onclick="copyCommand('edid-command', this)">📋 העתק פקודה</button>
+            </div>
+
+            <div class="step">
+                <div class="step-title">
+                    <span class="step-number">4</span>
+                    החלת הגדרות EDID
+                </div>
+                <p>הפעל את הפקודה הבאה כדי להחיל את ההגדרות החדשות:</p>
+                <pre><code>kvmd-edidconf --apply</code></pre>
+            </div>
+
+            <div class="success">
+                <strong>✅ סיום!</strong><br>
+                הגדרות ה-EDID עודכנו בהצלחה. ייתכן שתצטרך לנתק ולחבר מחדש את כבל ה-HDMI כדי שהשינויים ייכנסו לתוקף.
+            </div>
+        </section>
+
+        <!-- Add more sections here as needed -->
+
+        <footer>
+            <p>מדריך זה נוצר עבור מערכת Web Shell | עודכן לאחרונה: פברואר 2026</p>
+        </footer>
+    </div>
+
+    <script>
+        function copyCommand(elementId, button) {
+            const codeElement = document.getElementById(elementId);
+            const text = codeElement.innerText;
+            
+            navigator.clipboard.writeText(text).then(() => {
+                button.textContent = '✅ הועתק!';
+                button.classList.add('copied');
+                
+                setTimeout(() => {
+                    button.textContent = '📋 העתק פקודה';
+                    button.classList.remove('copied');
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+                alert('שגיאה בהעתקה');
+            });
+        }
+    </script>
+</body>
+</html>
