@@ -2,9 +2,131 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const { Client } = require('ssh2');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Generate random password
+function generateRandomPassword(length = 12) {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
+    let password = '';
+    for (let i = 0; i < length; i++) {
+        password += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return password;
+}
+
+// SSH into PiKVM and change password
+async function changePiKVMPassword(ipAddress, newPassword) {
+    return new Promise((resolve, reject) => {
+        const conn = new Client();
+        
+        // Python script to change password
+        const pythonScript = `
+import os
+import pty
+import time
+
+USER = "admin"
+PASSWORD = "${newPassword}"
+CMD = ["kvmd-htpasswd", "set", USER]
+
+def automate():
+    pid, fd = pty.fork()
+    if pid == 0:
+        try:
+            os.execvp(CMD[0], CMD)
+        except FileNotFoundError:
+            print(f"Error: Command {CMD[0]} not found.")
+            os._exit(1)
+    else:
+        time.sleep(1)
+        os.write(fd, (PASSWORD + "\\n").encode())
+        time.sleep(1)
+        os.write(fd, (PASSWORD + "\\n").encode())
+        time.sleep(1)
+        print("Password changed successfully.")
+
+if __name__ == "__main__":
+    automate()
+`;
+
+        conn.on('ready', () => {
+            console.log(`SSH connected to ${ipAddress}`);
+            
+            // Step 1: Write the Python script to a temp file
+            const escapedScript = pythonScript.replace(/'/g, "'\\''");
+            const writeScriptCmd = `echo '${escapedScript}' > /tmp/change_password.py`;
+            
+            conn.exec(writeScriptCmd, (err, stream) => {
+                if (err) {
+                    conn.end();
+                    return reject(err);
+                }
+                
+                stream.on('close', () => {
+                    // Step 2: Save the password to a temp file
+                    const savePasswordCmd = `echo '${newPassword}' > /tmp/current_password.txt`;
+                    
+                    conn.exec(savePasswordCmd, (err, stream) => {
+                        if (err) {
+                            conn.end();
+                            return reject(err);
+                        }
+                        
+                        stream.on('close', () => {
+                            // Step 3: Run the Python script
+                            conn.exec('python3 /tmp/change_password.py', (err, stream) => {
+                                if (err) {
+                                    conn.end();
+                                    return reject(err);
+                                }
+                                
+                                let output = '';
+                                stream.on('data', (data) => {
+                                    output += data.toString();
+                                });
+                                
+                                stream.on('close', () => {
+                                    console.log('Password change output:', output);
+                                    
+                                    // Step 4: Restart kvmd services
+                                    conn.exec('systemctl restart kvmd kvmd-nginx', (err, stream) => {
+                                        if (err) {
+                                            conn.end();
+                                            return reject(err);
+                                        }
+                                        
+                                        stream.on('close', () => {
+                                            console.log('Services restarted');
+                                            conn.end();
+                                            resolve({ success: true, password: newPassword });
+                                        });
+                                    });
+                                });
+                            });
+                        });
+                    });
+                });
+            });
+        });
+        
+        conn.on('error', (err) => {
+            console.error(`SSH connection error to ${ipAddress}:`, err.message);
+            reject(err);
+        });
+        
+        // Connect to the PiKVM
+        conn.connect({
+            host: ipAddress,
+            port: 22,
+            username: 'root',
+            password: 'root', // Default PiKVM root password - adjust if needed
+            readyTimeout: 10000
+        });
+    });
+}
 
 // Middleware
 app.use(cors());
@@ -510,6 +632,41 @@ app.post('/api/clear-history', (req, res) => {
 // Hive system route
 app.get('/box', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'hive.html'));
+});
+
+// API endpoint to change PiKVM password and get redirect credentials
+app.post('/api/pikvm/connect', async (req, res) => {
+    const { ipAddress } = req.body;
+    
+    if (!ipAddress) {
+        return res.status(400).json({ error: 'IP address is required' });
+    }
+    
+    try {
+        // Generate a random 12-character password
+        const newPassword = generateRandomPassword(12);
+        
+        console.log(`Changing password for PiKVM at ${ipAddress}...`);
+        
+        // SSH into the machine and change password
+        await changePiKVMPassword(ipAddress, newPassword);
+        
+        // Wait a bit for services to restart
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        res.json({
+            success: true,
+            password: newPassword,
+            ipAddress: ipAddress,
+            message: 'Password changed successfully'
+        });
+    } catch (error) {
+        console.error('Error changing PiKVM password:', error);
+        res.status(500).json({
+            error: 'Failed to change password',
+            message: error.message
+        });
+    }
 });
 
 // User system route

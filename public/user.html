@@ -116,6 +116,42 @@
         </div>
     </div>
 
+    <!-- Loading Modal -->
+    <div class="loading-modal hidden" id="loadingModal">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <h2 id="loadingTitle">מתחבר לתא...</h2>
+            <p id="loadingMessage">אנא המתן, המערכת מכינה את החיבור שלך</p>
+            <div class="loading-steps">
+                <div class="loading-step" id="step1">
+                    <span class="step-icon">⏳</span>
+                    <span class="step-text">יצירת סיסמה חדשה</span>
+                </div>
+                <div class="loading-step" id="step2">
+                    <span class="step-icon">⏳</span>
+                    <span class="step-text">עדכון המערכת המרוחקת</span>
+                </div>
+                <div class="loading-step" id="step3">
+                    <span class="step-icon">⏳</span>
+                    <span class="step-text">הפעלה מחדש של השירותים</span>
+                </div>
+                <div class="loading-step" id="step4">
+                    <span class="step-icon">⏳</span>
+                    <span class="step-text">מעביר אותך למערכת</span>
+                </div>
+            </div>
+            <p class="loading-password hidden" id="loadingPassword">הסיסמה שלך: <strong id="passwordDisplay"></strong></p>
+        </div>
+    </div>
+
+    <!-- Hidden form for auto-redirect -->
+    <form method="POST" id="pikvmRedirectForm" class="hidden" target="_blank">
+        <input type="hidden" name="user" value="admin">
+        <input type="hidden" name="passwd" id="formPassword" value="">
+        <input type="hidden" name="expire" value="0">
+        <input type="hidden" name="redirect" value="/kvm/">
+    </form>
+
     <script src="js/common.js"></script>
     <script src="js/user.js"></script>
 </body>

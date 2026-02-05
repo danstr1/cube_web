@@ -841,3 +841,108 @@ tr:hover {
     color: var(--text-muted);
     z-index: 100;
 }
+
+/* Loading Modal */
+.loading-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(10px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.loading-content {
+    background: var(--card-bg);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--border-radius);
+    padding: 40px 60px;
+    text-align: center;
+    max-width: 500px;
+    width: 90%;
+}
+
+.loading-spinner {
+    width: 80px;
+    height: 80px;
+    border: 4px solid var(--glass-border);
+    border-top: 4px solid var(--primary-color);
+    border-radius: 50%;
+    margin: 0 auto 30px;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.loading-content h2 {
+    color: var(--text-light);
+    margin-bottom: 15px;
+    font-size: 1.5rem;
+}
+
+.loading-content p {
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.loading-steps {
+    margin-top: 30px;
+    text-align: right;
+}
+
+.loading-step {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--glass-border);
+    color: var(--text-muted);
+    transition: all 0.3s ease;
+}
+
+.loading-step:last-child {
+    border-bottom: none;
+}
+
+.loading-step.active {
+    color: var(--primary-color);
+}
+
+.loading-step.completed {
+    color: var(--secondary-color);
+}
+
+.loading-step .step-icon {
+    font-size: 1.2rem;
+    min-width: 30px;
+    text-align: center;
+}
+
+.loading-step .step-text {
+    flex: 1;
+}
+
+.loading-password {
+    margin-top: 25px;
+    padding: 15px;
+    background: rgba(46, 204, 113, 0.2);
+    border: 1px solid var(--secondary-color);
+    border-radius: var(--border-radius);
+    color: var(--secondary-color);
+}
+
+.loading-password strong {
+    font-family: monospace;
+    font-size: 1.1rem;
+    letter-spacing: 1px;
+}
+

@@ -9,6 +9,7 @@ const TIMEOUT_SECONDS = 10;
 
 // DOM Elements - initialized after DOM loads
 let loginScreen, connectedScreen, notFoundScreen, inputDisplay;
+let loadingModal, loadingTitle, loadingMessage, loadingPassword, passwordDisplay;
 
 // Initialize
 function init() {
@@ -17,12 +18,20 @@ function init() {
     connectedScreen = document.getElementById('connectedScreen');
     notFoundScreen = document.getElementById('notFoundScreen');
     inputDisplay = document.getElementById('inputValue');
+    loadingModal = document.getElementById('loadingModal');
+    loadingTitle = document.getElementById('loadingTitle');
+    loadingMessage = document.getElementById('loadingMessage');
+    loadingPassword = document.getElementById('loadingPassword');
+    passwordDisplay = document.getElementById('passwordDisplay');
     
     // Listen for keyboard input (for tag reader)
     document.addEventListener('keydown', handleKeyboard);
     
     // Attach keypad event listeners
     setupKeypad();
+    
+    // Setup connect link handler
+    setupConnectLink();
     
     console.log('User system initialized');
 }
@@ -214,6 +223,129 @@ function backToLogin() {
     `;
     document.head.appendChild(blinkStyle);
 })();
+
+// Setup connect link to handle PiKVM password change and redirect
+function setupConnectLink() {
+    const connectLink = document.getElementById('connectLink');
+    if (!connectLink) return;
+    
+    connectLink.addEventListener('click', async function(e) {
+        e.preventDefault();
+        
+        if (!currentBox || !currentBox.ipAddress) {
+            showNotification('שגיאה: לא נמצאה כתובת IP', 'error');
+            return;
+        }
+        
+        // Show loading modal
+        showLoadingModal();
+        
+        try {
+            // Step 1: Generate password
+            updateLoadingStep(1, 'active');
+            await delay(500);
+            
+            // Step 2: Update remote system (this calls the API)
+            updateLoadingStep(1, 'completed');
+            updateLoadingStep(2, 'active');
+            
+            const result = await apiPost('/api/pikvm/connect', {
+                ipAddress: currentBox.ipAddress
+            });
+            
+            if (!result || !result.success) {
+                throw new Error(result?.message || 'Failed to change password');
+            }
+            
+            // Step 3: Restart services (already done on server)
+            updateLoadingStep(2, 'completed');
+            updateLoadingStep(3, 'active');
+            await delay(2000);
+            updateLoadingStep(3, 'completed');
+            
+            // Step 4: Redirect
+            updateLoadingStep(4, 'active');
+            
+            // Show the password
+            passwordDisplay.textContent = result.password;
+            loadingPassword.classList.remove('hidden');
+            
+            loadingTitle.textContent = 'מעביר אותך למערכת...';
+            loadingMessage.textContent = 'החיבור מוכן, מפנה אותך כעת';
+            
+            await delay(1500);
+            updateLoadingStep(4, 'completed');
+            
+            // Auto-submit the form to redirect
+            redirectToPiKVM(currentBox.ipAddress, result.password);
+            
+            // Hide loading modal after a short delay
+            await delay(1000);
+            hideLoadingModal();
+            
+        } catch (error) {
+            console.error('Error connecting to PiKVM:', error);
+            hideLoadingModal();
+            showNotification('שגיאה בהתחברות: ' + error.message, 'error');
+        }
+    });
+}
+
+// Show loading modal
+function showLoadingModal() {
+    loadingModal.classList.remove('hidden');
+    loadingTitle.textContent = 'מתחבר לתא...';
+    loadingMessage.textContent = 'אנא המתן, המערכת מכינה את החיבור שלך';
+    loadingPassword.classList.add('hidden');
+    
+    // Reset all steps
+    for (let i = 1; i <= 4; i++) {
+        const step = document.getElementById(`step${i}`);
+        if (step) {
+            step.classList.remove('active', 'completed');
+            step.querySelector('.step-icon').textContent = '⏳';
+        }
+    }
+}
+
+// Hide loading modal
+function hideLoadingModal() {
+    loadingModal.classList.add('hidden');
+}
+
+// Update loading step status
+function updateLoadingStep(stepNum, status) {
+    const step = document.getElementById(`step${stepNum}`);
+    if (!step) return;
+    
+    step.classList.remove('active', 'completed');
+    step.classList.add(status);
+    
+    const icon = step.querySelector('.step-icon');
+    if (status === 'active') {
+        icon.textContent = '🔄';
+    } else if (status === 'completed') {
+        icon.textContent = '✅';
+    }
+}
+
+// Redirect to PiKVM with credentials
+function redirectToPiKVM(ipAddress, password) {
+    const form = document.getElementById('pikvmRedirectForm');
+    const passwordInput = document.getElementById('formPassword');
+    
+    // Set the form action to the PiKVM login URL
+    form.action = `https://${ipAddress}/api/auth/login`;
+    passwordInput.value = password;
+    
+    // Submit the form
+    form.submit();
+}
+
+// Helper delay function
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 // Initialize on load
 if (document.readyState === 'loading') {

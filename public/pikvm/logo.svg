@@ -1,0 +1,51 @@
+<svg width="500" height="500" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="grapeGrad" cx="30%" cy="30%" r="70%" fx="40%" fy="40%">
+      <stop offset="0%" style="stop-color:#d49ae6;stop-opacity:1" /> <stop offset="50%" style="stop-color:#8e44ad;stop-opacity:1" /> <stop offset="100%" style="stop-color:#5b2c6f;stop-opacity:1" /> </radialGradient>
+    
+    <linearGradient id="leafGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#82e0aa;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#27ae60;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <rect width="500" height="500" fill="#1a1a1a" />
+
+  <g stroke="#4a4a4a" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.6">
+    <path d="M-10 40 H 400 L 440 80 H 510" />
+    <path d="M-10 80 H 300 L 340 120 H 510" />
+    <path d="M-10 120 L 40 80 H 200" />
+    
+    <path d="M50 200 H 150 L 180 230 H 400" />
+    <path d="M-10 250 H 100 L 140 290 H 350" />
+    <path d="M300 350 L 350 400 H 510" />
+    <path d="M150 400 H 250 L 280 430 H 510" />
+    
+    <circle cx="400" cy="40" r="8" stroke="none" fill="#4a4a4a" />
+    <circle cx="100" cy="250" r="6" stroke="none" fill="#4a4a4a" />
+    <circle cx="440" cy="80" r="6" stroke="none" fill="#4a4a4a" />
+    <circle cx="280" cy="430" r="6" stroke="none" fill="#4a4a4a" />
+  </g>
+
+  <g fill="url(#grapeGrad)" stroke="#4a235a" stroke-width="1">
+    <circle cx="140" cy="200" r="42" />
+    <circle cx="220" cy="200" r="42" />
+    <circle cx="300" cy="200" r="42" />
+    <circle cx="380" cy="200" r="42" />
+
+    <circle cx="180" cy="272" r="42" />
+    <circle cx="260" cy="272" r="42" />
+    <circle cx="340" cy="272" r="42" />
+
+    <circle cx="220" cy="344" r="42" />
+    <circle cx="300" cy="344" r="42" />
+
+    <circle cx="260" cy="416" r="42" />
+  </g>
+
+  <path d="M260 200 Q 250 120 320 90 Q 340 130 300 160 Q 280 180 260 200 Z" 
+        fill="url(#leafGrad)" stroke="#1e8449" stroke-width="2"/>
+  
+  <path d="M260 200 Q 270 180 280 160" stroke="#1e8449" stroke-width="4" fill="none" />
+
+</svg>
