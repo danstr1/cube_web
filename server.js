@@ -176,7 +176,7 @@ if __name__ == "__main__":
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static('public'));
 
 // Database path
@@ -673,6 +673,306 @@ app.post('/api/clear-history', (req, res) => {
     
     writeDatabase(db);
     res.json({ success: true, message: 'ההיסטוריה נמחקה בהצלחה' });
+});
+
+// ============================================================
+// PiKVM Setup API
+// ============================================================
+
+const SETUP_DIR = path.join(__dirname, 'public', 'setup');
+
+// Read SSH password from file
+function getSetupSshPassword() {
+    try {
+        return fs.readFileSync(path.join(SETUP_DIR, 'ssh_password'), 'utf8').trim();
+    } catch (err) {
+        console.error('Error reading ssh_password file:', err.message);
+        return 'root';
+    }
+}
+
+// Helper: run a single SSH command and return output
+function sshExec(conn, command) {
+    return new Promise((resolve, reject) => {
+        conn.exec(command, (err, stream) => {
+            if (err) return reject(err);
+            let stdout = '';
+            let stderr = '';
+            stream.on('data', (data) => { stdout += data.toString(); });
+            stream.stderr.on('data', (data) => { stderr += data.toString(); });
+            stream.on('close', (code) => {
+                resolve({ code, stdout: stdout.trim(), stderr: stderr.trim() });
+            });
+        });
+    });
+}
+
+// Helper: upload file content via SSH using base64
+function sshUploadFile(conn, localFilePath, remotePath) {
+    return new Promise((resolve, reject) => {
+        let fileContent;
+        try {
+            fileContent = fs.readFileSync(localFilePath);
+        } catch (err) {
+            return reject(new Error(`Cannot read local file: ${localFilePath}`));
+        }
+        const base64 = fileContent.toString('base64');
+        // Use printf + base64 to avoid echo issues with binary data
+        const cmd = `echo '${base64}' | base64 -d > ${remotePath}`;
+        conn.exec(cmd, (err, stream) => {
+            if (err) return reject(err);
+            let stderr = '';
+            stream.stderr.on('data', (data) => { stderr += data.toString(); });
+            stream.on('close', (code) => {
+                if (code !== 0) return reject(new Error(`Upload failed (code ${code}): ${stderr}`));
+                resolve({ code, stderr });
+            });
+        });
+    });
+}
+
+// Helper: create SSH connection (optional custom password overrides file)
+function createSshConnection(ip, customPassword) {
+    return new Promise((resolve, reject) => {
+        const conn = new Client();
+        const password = customPassword || getSetupSshPassword();
+
+        conn.on('ready', () => resolve(conn));
+        conn.on('error', (err) => reject(err));
+
+        conn.connect({
+            host: ip,
+            port: 22,
+            username: 'root',
+            password: password,
+            readyTimeout: 15000
+        });
+    });
+}
+
+// Get SSH password from file
+app.get('/api/setup/ssh-password', (req, res) => {
+    const password = getSetupSshPassword();
+    res.json({ password });
+});
+
+// Test connection endpoint
+app.post('/api/setup/test-connection', async (req, res) => {
+    const { ip, password } = req.body;
+    if (!ip) return res.status(400).json({ success: false, message: 'IP is required' });
+
+    let conn;
+    try {
+        conn = await createSshConnection(ip, password);
+        const result = await sshExec(conn, 'hostname');
+        conn.end();
+        res.json({ success: true, message: `מחובר - hostname: ${result.stdout}` });
+    } catch (err) {
+        if (conn) conn.end();
+        console.error('Test connection error:', err.message);
+        res.json({ success: false, message: `שגיאת חיבור: ${err.message}` });
+    }
+});
+
+// Run a setup stage
+app.post('/api/setup/run-stage', async (req, res) => {
+    const { stage, currentIp, newIp, password, uploadedLogo } = req.body;
+
+    if (!stage || !currentIp) {
+        return res.status(400).json({ success: false, message: 'Missing required parameters' });
+    }
+
+    let conn;
+    try {
+        conn = await createSshConnection(currentIp, password);
+
+        // Enable write mode first
+        await sshExec(conn, 'rw');
+
+        let result;
+        switch (stage) {
+            case 'changeIp':
+                result = await stageChangeIp(conn, newIp);
+                break;
+            case 'setEdid':
+                result = await stageSetEdid(conn);
+                break;
+            case 'copySsl':
+                result = await stageCopySsl(conn);
+                break;
+            case 'replaceIndex':
+                result = await stageReplaceIndex(conn);
+                break;
+            case 'replaceLogo':
+                result = await stageReplaceLogo(conn, uploadedLogo);
+                break;
+            case 'configureNtp':
+                result = await stageConfigureNtp(conn);
+                break;
+            default:
+                result = { success: false, message: `Unknown stage: ${stage}` };
+        }
+
+        conn.end();
+        res.json(result);
+    } catch (err) {
+        if (conn) conn.end();
+        console.error(`Setup stage ${stage} error:`, err.message);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// Stage: Change IP address
+async function stageChangeIp(conn, newIp) {
+    if (!newIp) return { success: false, message: 'New IP address is required' };
+
+    const networkConfig = `[Match]
+Name=eth0
+
+[Network]
+Address=${newIp}/8
+DNS=10.0.0.1
+`;
+
+    const base64Config = Buffer.from(networkConfig).toString('base64');
+    const writeCmd = `echo '${base64Config}' | base64 -d > /etc/systemd/network/eth0.network`;
+
+    const writeResult = await sshExec(conn, writeCmd);
+    if (writeResult.code !== 0) {
+        return { success: false, message: `Failed to write network config: ${writeResult.stderr}` };
+    }
+
+    // Restart networkd to apply
+    const restartResult = await sshExec(conn, 'systemctl restart systemd-networkd 2>&1');
+    
+    return { 
+        success: true, 
+        message: `כתובת IP עודכנה ל-${newIp}/8` 
+    };
+}
+
+// Stage: Set EDID
+async function stageSetEdid(conn) {
+    const edidHex = `00FFFFFFFFFFFF0010AC132045393639
+201E0103803C22782ACD25A3574B9F27
+0D5054A54B00714F8180A9C0D1C00101
+010101010101023A801871382D40582C
+450056502100001E000000FF00335335
+475132330A2020202020000000FC0044
+454C4C204432373231480A20000000FD
+00384C1E5311000A2020202020200181
+02031AB14F9005040302071601061112
+1513141F65030C001000023A80187138
+2D40582C450056502100001E011D8018
+711C1620582C250056502100009E011D
+007251D01E206E28550056502100001E
+8C0AD08A20E02D10103E960056502100
+00180000000000000000000000000000
+0000000000000000000000000000004F`;
+
+    const writeCmd = `echo '${edidHex}' > /etc/kvmd/tc358743-edid.hex`;
+    const writeResult = await sshExec(conn, writeCmd);
+    if (writeResult.code !== 0) {
+        return { success: false, message: `Failed to write EDID: ${writeResult.stderr}` };
+    }
+
+    const applyResult = await sshExec(conn, 'kvmd-edidconf --apply 2>&1');
+    if (applyResult.code !== 0) {
+        return { success: false, message: `Failed to apply EDID: ${applyResult.stderr || applyResult.stdout}` };
+    }
+
+    return { success: true, message: 'EDID הוגדר והוחל בהצלחה' };
+}
+
+// Stage: Copy SSL certificates
+async function stageCopySsl(conn) {
+    const certPath = path.join(SETUP_DIR, 'server.crt');
+    const keyPath = path.join(SETUP_DIR, 'server.key');
+
+    // Backup existing certs
+    await sshExec(conn, 'cp /etc/kvmd/nginx/ssl/server.crt /etc/kvmd/nginx/ssl/server.crt.bak 2>/dev/null');
+    await sshExec(conn, 'cp /etc/kvmd/nginx/ssl/server.key /etc/kvmd/nginx/ssl/server.key.bak 2>/dev/null');
+
+    // Upload new certs
+    await sshUploadFile(conn, certPath, '/etc/kvmd/nginx/ssl/server.crt');
+    await sshUploadFile(conn, keyPath, '/etc/kvmd/nginx/ssl/server.key');
+
+    // Set permissions
+    await sshExec(conn, 'chmod 644 /etc/kvmd/nginx/ssl/server.crt');
+    await sshExec(conn, 'chmod 600 /etc/kvmd/nginx/ssl/server.key');
+
+    // Restart nginx
+    const restartResult = await sshExec(conn, 'systemctl restart kvmd-nginx 2>&1');
+
+    return { success: true, message: 'תעודות SSL הועתקו והשירות הופעל מחדש' };
+}
+
+// Stage: Replace index.html
+async function stageReplaceIndex(conn) {
+    const indexPath = path.join(SETUP_DIR, 'pikvm_index.html');
+
+    // Backup existing
+    await sshExec(conn, 'cp /usr/share/kvmd/web/kvm/index.html /usr/share/kvmd/web/kvm/index.html.bak 2>/dev/null');
+
+    // Upload new
+    await sshUploadFile(conn, indexPath, '/usr/share/kvmd/web/kvm/index.html');
+
+    return { success: true, message: 'index.html הוחלף בהצלחה' };
+}
+
+// Stage: Replace logo (supports uploaded base64 or default file)
+async function stageReplaceLogo(conn, uploadedLogoBase64) {
+    // Backup existing
+    await sshExec(conn, 'cp /usr/share/kvmd/web/share/svg/logo.svg /usr/share/kvmd/web/share/svg/logo.svg.bak 2>/dev/null');
+
+    if (uploadedLogoBase64) {
+        // User uploaded a custom logo - send it via base64
+        const cmd = `echo '${uploadedLogoBase64}' | base64 -d > /usr/share/kvmd/web/share/svg/logo.svg`;
+        const result = await sshExec(conn, cmd);
+        if (result.code !== 0) {
+            return { success: false, message: `Failed to upload custom logo: ${result.stderr}` };
+        }
+        return { success: true, message: 'logo.svg הוחלף בהצלחה (קובץ מותאם אישית)' };
+    } else {
+        // Use default file from setup folder
+        const logoPath = path.join(SETUP_DIR, 'pikvm_logo.svg');
+        await sshUploadFile(conn, logoPath, '/usr/share/kvmd/web/share/svg/logo.svg');
+        return { success: true, message: 'logo.svg הוחלף בהצלחה (קובץ ברירת מחדל)' };
+    }
+}
+
+// Stage: Configure NTP
+async function stageConfigureNtp(conn) {
+    // Configure NTP server in timesyncd
+    const ntpConfig = `[Time]
+NTP=10.253.253.1
+FallbackNTP=10.253.253.1
+`;
+
+    const base64Config = Buffer.from(ntpConfig).toString('base64');
+    const writeCmd = `echo '${base64Config}' | base64 -d > /etc/systemd/timesyncd.conf`;
+
+    const writeResult = await sshExec(conn, writeCmd);
+    if (writeResult.code !== 0) {
+        return { success: false, message: `Failed to write NTP config: ${writeResult.stderr}` };
+    }
+
+    // Enable and restart timesyncd
+    await sshExec(conn, 'systemctl enable systemd-timesyncd 2>&1');
+    const restartResult = await sshExec(conn, 'systemctl restart systemd-timesyncd 2>&1');
+
+    // Verify NTP status
+    const statusResult = await sshExec(conn, 'timedatectl show --property=NTP --value 2>&1');
+
+    return { 
+        success: true, 
+        message: `NTP הופעל עם שרת 10.253.253.1 (סטטוס: ${statusResult.stdout || 'active'})` 
+    };
+}
+
+// Setup page route
+app.get('/setup', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'setup.html'));
 });
 
 // Hive system route

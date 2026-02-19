@@ -22,6 +22,10 @@
     {
       "id": 2,
       "name": "כוורת 2"
+    },
+    {
+      "id": 3,
+      "name": "כוורת 3"
     }
   ],
   "boxes": [
@@ -80,14 +84,36 @@
       "boxNumber": 2,
       "ipAddress": "10.1.2.2",
       "status": "free"
+    },
+    {
+      "id": 10,
+      "hiveId": 3,
+      "boxNumber": 1,
+      "ipAddress": "10.1.2.39",
+      "status": "occupied",
+      "userId": "99999"
     }
   ],
-  "users": [],
+  "users": [
+    {
+      "id": "99999",
+      "boxId": 10,
+      "hiveId": 3,
+      "connectedAt": "2026-02-05T17:33:12.021Z"
+    }
+  ],
   "identityMappings": [
     {
       "id": "3059832319",
       "name": "דן"
     }
   ],
-  "usageStats": []
+  "usageStats": [
+    {
+      "userId": "99999",
+      "boxId": 10,
+      "action": "connect",
+      "timestamp": "2026-02-05T17:33:12.024Z"
+    }
+  ]
 }
