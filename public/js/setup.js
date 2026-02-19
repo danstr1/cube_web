@@ -365,14 +365,22 @@ async function runSetup() {
     progressSection.classList.add('active');
     progressSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-    // Build progress UI
-    buildProgressUI(selectedStages);
-
     // Clear log
     document.getElementById('logContent').innerHTML = '';
 
     addLog(`מתחיל תהליך הגדרה עבור PiKVM ב-${currentIp}`, 'info');
     addLog(`שלבים נבחרים: ${selectedStages.length}`, 'info');
+
+    // Reorder: move changeIp to last since it changes the IP and drops the connection
+    if (selectedStages.includes('changeIp') && selectedStages.length > 1) {
+        const idx = selectedStages.indexOf('changeIp');
+        selectedStages.splice(idx, 1);
+        selectedStages.push('changeIp');
+        addLog('⚠️ שלב שינוי IP הועבר לסוף כדי למנוע ניתוק באמצע התהליך', 'warning');
+    }
+
+    // Build progress UI (after reorder)
+    buildProgressUI(selectedStages);
 
     let completedCount = 0;
     let failedCount = 0;
