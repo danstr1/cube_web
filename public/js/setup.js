@@ -41,6 +41,11 @@ const STAGES = {
         id: 'disableClosePopup',
         name: 'בטל חלון קופץ בעת יציאה',
         icon: '🚫'
+    },
+    rebootPikvm: {
+        id: 'rebootPikvm',
+        name: 'אתחול מחדש PiKVM',
+        icon: '🔄'
     }
 };
 
@@ -385,11 +390,23 @@ async function runSetup() {
     addLog(`מתחיל תהליך הגדרה עבור PiKVM ב-${currentIp}`, 'info');
     addLog(`שלבים נבחרים: ${selectedStages.length}`, 'info');
 
-    // Reorder: move changeIp to last since it changes the IP and drops the connection
+    // Reorder: move changeIp and rebootPikvm to last since they drop the connection
+    if (selectedStages.includes('rebootPikvm') && selectedStages.length > 1) {
+        const idx = selectedStages.indexOf('rebootPikvm');
+        selectedStages.splice(idx, 1);
+        selectedStages.push('rebootPikvm');
+        addLog('⚠️ שלב אתחול מחדש הועבר לסוף', 'warning');
+    }
     if (selectedStages.includes('changeIp') && selectedStages.length > 1) {
         const idx = selectedStages.indexOf('changeIp');
         selectedStages.splice(idx, 1);
-        selectedStages.push('changeIp');
+        // Insert before reboot if reboot is last, otherwise push to end
+        const rebootIdx = selectedStages.indexOf('rebootPikvm');
+        if (rebootIdx !== -1) {
+            selectedStages.splice(rebootIdx, 0, 'changeIp');
+        } else {
+            selectedStages.push('changeIp');
+        }
         addLog('⚠️ שלב שינוי IP הועבר לסוף כדי למנוע ניתוק באמצע התהליך', 'warning');
     }
 
@@ -414,7 +431,7 @@ async function runSetup() {
         addLog(`[שלב ${i + 1}/${totalStages}] מתחיל: ${stage.name}`, 'command');
 
         try {
-            const result = await executeStage(stageId, currentIp, newIp);
+            const result = await executeStage(stageId, currentIp, newIp, selectedStages);
 
             if (result.skipped) {
                 updateStageProgress(stageId, 'failed', 'דולג');
@@ -480,7 +497,7 @@ function showSkipButton(show) {
 }
 
 // Execute a single stage via API
-async function executeStage(stageId, currentIp, newIp) {
+async function executeStage(stageId, currentIp, newIp, allStages) {
     const password = document.getElementById('sshPassword').value.trim();
     const body = { 
         stage: stageId, 
@@ -492,6 +509,11 @@ async function executeStage(stageId, currentIp, newIp) {
     // If this is the logo stage and user uploaded a file, send it
     if (stageId === 'replaceLogo' && logoSource === 'upload' && uploadedLogoBase64) {
         body.uploadedLogo = uploadedLogoBase64;
+    }
+
+    // If changeIp + rebootPikvm are both selected, skip network restart (reboot will apply it)
+    if (stageId === 'changeIp' && allStages && allStages.includes('rebootPikvm')) {
+        body.skipNetworkRestart = true;
     }
 
     // Create abort controller for skip/timeout support

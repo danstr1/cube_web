@@ -799,7 +799,7 @@ app.post('/api/setup/test-connection', async (req, res) => {
 
 // Run a setup stage
 app.post('/api/setup/run-stage', async (req, res) => {
-    const { stage, currentIp, newIp, password, uploadedLogo } = req.body;
+    const { stage, currentIp, newIp, password, uploadedLogo, skipNetworkRestart } = req.body;
 
     if (!stage || !currentIp) {
         return res.status(400).json({ success: false, message: 'Missing required parameters' });
@@ -815,7 +815,7 @@ app.post('/api/setup/run-stage', async (req, res) => {
         let result;
         switch (stage) {
             case 'changeIp':
-                result = await stageChangeIp(conn, newIp);
+                result = await stageChangeIp(conn, newIp, skipNetworkRestart);
                 break;
             case 'setEdid':
                 result = await stageSetEdid(conn);
@@ -838,6 +838,9 @@ app.post('/api/setup/run-stage', async (req, res) => {
             case 'disableClosePopup':
                 result = await stageDisableClosePopup(conn);
                 break;
+            case 'rebootPikvm':
+                result = await stageRebootPikvm(conn);
+                break;
             default:
                 result = { success: false, message: `Unknown stage: ${stage}` };
         }
@@ -852,7 +855,7 @@ app.post('/api/setup/run-stage', async (req, res) => {
 });
 
 // Stage: Change IP address
-async function stageChangeIp(conn, newIp) {
+async function stageChangeIp(conn, newIp, skipNetworkRestart) {
     if (!newIp) return { success: false, message: 'New IP address is required' };
 
     const networkConfig = `[Match]
@@ -869,6 +872,14 @@ DNS=10.0.0.1
     const writeResult = await sshExec(conn, writeCmd);
     if (writeResult.code !== 0) {
         return { success: false, message: `Failed to write network config: ${writeResult.stderr}` };
+    }
+
+    if (skipNetworkRestart) {
+        // Reboot stage will apply the new IP
+        return { 
+            success: true, 
+            message: `קובץ רשת עודכן ל-${newIp}/8 (יוחל באתחול מחדש)` 
+        };
     }
 
     // Restart networkd to apply
@@ -1060,6 +1071,17 @@ async function stageDisableClosePopup(conn) {
     }
 
     return { success: false, message: 'השינוי לא אומת - ייתכן שהפורמט בקובץ שונה מהצפוי' };
+}
+
+// Stage: Reboot PiKVM
+async function stageRebootPikvm(conn) {
+    // Send reboot command - connection will drop, which is expected
+    try {
+        await sshExec(conn, 'reboot', 5000);
+    } catch (err) {
+        // Connection drop or timeout is expected after reboot
+    }
+    return { success: true, message: 'PiKVM בתהליך אתחול מחדש' };
 }
 
 // Stage: Configure NTP
