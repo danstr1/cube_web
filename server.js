@@ -691,24 +691,32 @@ function getSetupSshPassword() {
     }
 }
 
-// Helper: run a single SSH command and return output
-function sshExec(conn, command) {
+// Helper: run a single SSH command and return output (with timeout)
+function sshExec(conn, command, timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
+        let timer = null;
         conn.exec(command, (err, stream) => {
             if (err) return reject(err);
             let stdout = '';
             let stderr = '';
+
+            timer = setTimeout(() => {
+                try { stream.close(); } catch (e) {}
+                reject(new Error(`SSH command timed out after ${timeoutMs / 1000}s: ${command.substring(0, 80)}`));
+            }, timeoutMs);
+
             stream.on('data', (data) => { stdout += data.toString(); });
             stream.stderr.on('data', (data) => { stderr += data.toString(); });
             stream.on('close', (code) => {
+                if (timer) clearTimeout(timer);
                 resolve({ code, stdout: stdout.trim(), stderr: stderr.trim() });
             });
         });
     });
 }
 
-// Helper: upload file content via SSH using base64
-function sshUploadFile(conn, localFilePath, remotePath) {
+// Helper: upload file content via SSH using base64 (with timeout)
+function sshUploadFile(conn, localFilePath, remotePath, timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
         let fileContent;
         try {
@@ -719,11 +727,21 @@ function sshUploadFile(conn, localFilePath, remotePath) {
         const base64 = fileContent.toString('base64');
         // Use printf + base64 to avoid echo issues with binary data
         const cmd = `echo '${base64}' | base64 -d > ${remotePath}`;
+        let timer = null;
         conn.exec(cmd, (err, stream) => {
             if (err) return reject(err);
+            let stdout = '';
             let stderr = '';
+
+            timer = setTimeout(() => {
+                try { stream.close(); } catch (e) {}
+                reject(new Error(`File upload timed out after ${timeoutMs / 1000}s for ${remotePath}`));
+            }, timeoutMs);
+
+            stream.on('data', (data) => { stdout += data.toString(); });
             stream.stderr.on('data', (data) => { stderr += data.toString(); });
             stream.on('close', (code) => {
+                if (timer) clearTimeout(timer);
                 if (code !== 0) return reject(new Error(`Upload failed (code ${code}): ${stderr}`));
                 resolve({ code, stderr });
             });
@@ -808,6 +826,12 @@ app.post('/api/setup/run-stage', async (req, res) => {
                 break;
             case 'configureNtp':
                 result = await stageConfigureNtp(conn);
+                break;
+            case 'relativeMouse':
+                result = await stageRelativeMouse(conn);
+                break;
+            case 'disableClosePopup':
+                result = await stageDisableClosePopup(conn);
                 break;
             default:
                 result = { success: false, message: `Unknown stage: ${stage}` };
@@ -901,8 +925,11 @@ async function stageCopySsl(conn) {
     await sshExec(conn, 'chmod 644 /etc/kvmd/nginx/ssl/server.crt');
     await sshExec(conn, 'chmod 600 /etc/kvmd/nginx/ssl/server.key');
 
-    // Restart nginx
-    const restartResult = await sshExec(conn, 'systemctl restart kvmd-nginx 2>&1');
+    // Restart nginx (don't wait too long - use shorter timeout)
+    const restartResult = await sshExec(conn, 'systemctl restart kvmd-nginx 2>&1', 15000).catch(err => {
+        console.warn('kvmd-nginx restart timeout/error (non-fatal):', err.message);
+        return { code: -1, stdout: '', stderr: err.message };
+    });
 
     return { success: true, message: 'תעודות SSL הועתקו והשירות הופעל מחדש' };
 }
@@ -939,6 +966,95 @@ async function stageReplaceLogo(conn, uploadedLogoBase64) {
         await sshUploadFile(conn, logoPath, '/usr/share/kvmd/web/share/svg/logo.svg');
         return { success: true, message: 'logo.svg הוחלף בהצלחה (קובץ ברירת מחדל)' };
     }
+}
+
+// Stage: Set relative mouse mode in override.yaml
+async function stageRelativeMouse(conn) {
+    const requiredBlock = `kvmd:
+    hid:
+        mouse:
+            absolute: false`;
+
+    // Check if override.yaml exists and already has the config
+    const checkResult = await sshExec(conn, 'cat /etc/kvmd/override.yaml 2>/dev/null');
+    
+    if (checkResult.code === 0 && checkResult.stdout.includes('absolute: false')) {
+        return { success: true, message: 'override.yaml כבר מכיל הגדרת עכבר relative' };
+    }
+
+    if (checkResult.code === 0 && checkResult.stdout.trim().length > 0) {
+        // File exists with content - check if it already has kvmd.hid section
+        const existing = checkResult.stdout;
+        if (existing.includes('hid:') && existing.includes('mouse:')) {
+            // Has mouse section but wrong value - use sed to fix
+            const sedResult = await sshExec(conn, "sed -i 's/absolute: true/absolute: false/g' /etc/kvmd/override.yaml");
+            if (sedResult.code !== 0) {
+                return { success: false, message: `Failed to update override.yaml: ${sedResult.stderr}` };
+            }
+            // Verify it was changed
+            const verifyResult = await sshExec(conn, 'cat /etc/kvmd/override.yaml');
+            if (verifyResult.stdout.includes('absolute: false')) {
+                return { success: true, message: 'override.yaml עודכן - עכבר הועבר למצב relative' };
+            }
+        }
+        // Append the block to existing file
+        const appendBase64 = Buffer.from('\n' + requiredBlock + '\n').toString('base64');
+        const appendCmd = `echo '${appendBase64}' | base64 -d >> /etc/kvmd/override.yaml`;
+        const appendResult = await sshExec(conn, appendCmd);
+        if (appendResult.code !== 0) {
+            return { success: false, message: `Failed to append to override.yaml: ${appendResult.stderr}` };
+        }
+    } else {
+        // File doesn't exist or is empty - create it
+        const createBase64 = Buffer.from(requiredBlock + '\n').toString('base64');
+        const createCmd = `echo '${createBase64}' | base64 -d > /etc/kvmd/override.yaml`;
+        const createResult = await sshExec(conn, createCmd);
+        if (createResult.code !== 0) {
+            return { success: false, message: `Failed to create override.yaml: ${createResult.stderr}` };
+        }
+    }
+
+    return { success: true, message: 'override.yaml עודכן - עכבר הוגדר למצב relative' };
+}
+
+// Stage: Disable close popup (page.close.ask = false)
+async function stageDisableClosePopup(conn) {
+    const targetFile = '/usr/share/kvmd/web/share/js/kvm/main.js';
+
+    // Backup existing file
+    await sshExec(conn, `cp ${targetFile} ${targetFile}.bak 2>/dev/null`);
+
+    // Check if file exists
+    const checkResult = await sshExec(conn, `test -f ${targetFile} && echo exists`);
+    if (!checkResult.stdout.includes('exists')) {
+        return { success: false, message: `הקובץ ${targetFile} לא נמצא` };
+    }
+
+    // Check current state
+    const grepResult = await sshExec(conn, `grep 'page.close.ask' ${targetFile}`);
+    if (grepResult.code !== 0 || !grepResult.stdout) {
+        return { success: false, message: 'לא נמצאה שורת page.close.ask בקובץ main.js' };
+    }
+
+    // Already set to false?
+    if (grepResult.stdout.includes('"page.close.ask", false') || grepResult.stdout.includes("'page.close.ask', false")) {
+        return { success: true, message: 'page.close.ask כבר מוגדר כ-false' };
+    }
+
+    // Replace true with false for page.close.ask
+    const sedCmd = `sed -i 's/"page.close.ask", true/"page.close.ask", false/g' ${targetFile}`;
+    const sedResult = await sshExec(conn, sedCmd);
+    if (sedResult.code !== 0) {
+        return { success: false, message: `שגיאה בעריכת main.js: ${sedResult.stderr}` };
+    }
+
+    // Verify the change
+    const verifyResult = await sshExec(conn, `grep 'page.close.ask' ${targetFile}`);
+    if (verifyResult.stdout.includes('false')) {
+        return { success: true, message: 'חלון קופץ בעת יציאה בוטל בהצלחה (page.close.ask = false)' };
+    }
+
+    return { success: false, message: 'השינוי לא אומת - ייתכן שהפורמט בקובץ שונה מהצפוי' };
 }
 
 // Stage: Configure NTP

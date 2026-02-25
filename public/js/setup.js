@@ -31,12 +31,26 @@ const STAGES = {
         id: 'configureNtp',
         name: 'הגדרת NTP',
         icon: '⏰'
+    },
+    relativeMouse: {
+        id: 'relativeMouse',
+        name: 'העבר עכבר למצב relative',
+        icon: '🖱️'
+    },
+    disableClosePopup: {
+        id: 'disableClosePopup',
+        name: 'בטל חלון קופץ בעת יציאה',
+        icon: '🚫'
     }
 };
 
 let isRunning = false;
 let uploadedLogoBase64 = null;
 let logoSource = 'default'; // 'default' or 'upload'
+let currentAbortController = null; // For skipping stages
+let skipRequested = false;
+
+const STAGE_TIMEOUT_MS = 60000; // 60 second timeout per stage
 
 // ==============================
 // Initialization
@@ -386,10 +400,14 @@ async function runSetup() {
     let failedCount = 0;
     const totalStages = selectedStages.length;
 
+    // Show skip button
+    showSkipButton(true);
+
     // Run each stage sequentially
     for (let i = 0; i < selectedStages.length; i++) {
         const stageId = selectedStages[i];
         const stage = STAGES[stageId];
+        skipRequested = false;
 
         updateOverallProgress(i, totalStages, `מריץ: ${stage.name}...`);
         updateStageProgress(stageId, 'running', 'מריץ...');
@@ -398,7 +416,11 @@ async function runSetup() {
         try {
             const result = await executeStage(stageId, currentIp, newIp);
 
-            if (result.success) {
+            if (result.skipped) {
+                updateStageProgress(stageId, 'failed', 'דולג');
+                addLog(`⏭️ ${stage.name} דולג על ידי המשתמש`, 'warning');
+                failedCount++;
+            } else if (result.success) {
                 updateStageProgress(stageId, 'completed', 'הושלם');
                 addLog(`✅ ${stage.name} הושלם בהצלחה`, 'success');
                 if (result.message) addLog(`   ${result.message}`, 'info');
@@ -409,11 +431,19 @@ async function runSetup() {
                 failedCount++;
             }
         } catch (err) {
-            updateStageProgress(stageId, 'failed', 'שגיאת רשת');
-            addLog(`❌ ${stage.name} נכשל: ${err.message}`, 'error');
+            if (skipRequested) {
+                updateStageProgress(stageId, 'failed', 'דולג');
+                addLog(`⏭️ ${stage.name} דולג על ידי המשתמש`, 'warning');
+            } else {
+                updateStageProgress(stageId, 'failed', err.message.includes('timeout') ? 'חריגת זמן' : 'שגיאת רשת');
+                addLog(`❌ ${stage.name} נכשל: ${err.message}`, 'error');
+            }
             failedCount++;
         }
     }
+
+    // Hide skip button
+    showSkipButton(false);
 
     // Final progress
     updateOverallProgress(totalStages, totalStages, failedCount === 0 ? 'הושלם!' : 'הושלם עם שגיאות');
@@ -435,6 +465,20 @@ async function runSetup() {
     isRunning = false;
 }
 
+// Skip the current running stage
+function skipCurrentStage() {
+    if (!currentAbortController) return;
+    skipRequested = true;
+    currentAbortController.abort();
+    addLog('⏭️ המשתמש ביקש לדלג על השלב הנוכחי...', 'warning');
+}
+
+// Show/hide skip button
+function showSkipButton(show) {
+    const btn = document.getElementById('skipStageBtn');
+    if (btn) btn.style.display = show ? 'flex' : 'none';
+}
+
 // Execute a single stage via API
 async function executeStage(stageId, currentIp, newIp) {
     const password = document.getElementById('sshPassword').value.trim();
@@ -450,18 +494,44 @@ async function executeStage(stageId, currentIp, newIp) {
         body.uploadedLogo = uploadedLogoBase64;
     }
 
-    const response = await fetch('/api/setup/run-stage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-    });
+    // Create abort controller for skip/timeout support
+    currentAbortController = new AbortController();
+    const signal = currentAbortController.signal;
 
-    if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        return { success: false, message: errData.message || `HTTP ${response.status}` };
+    // Auto-timeout after STAGE_TIMEOUT_MS
+    const timeoutId = setTimeout(() => {
+        addLog(`⏰ חריגת זמן (${STAGE_TIMEOUT_MS / 1000} שניות) - עובר לשלב הבא`, 'warning');
+        currentAbortController.abort();
+    }, STAGE_TIMEOUT_MS);
+
+    try {
+        const response = await fetch('/api/setup/run-stage', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            return { success: false, message: errData.message || `HTTP ${response.status}` };
+        }
+
+        return await response.json();
+    } catch (err) {
+        clearTimeout(timeoutId);
+        if (signal.aborted) {
+            if (skipRequested) {
+                return { success: false, skipped: true, message: 'דולג על ידי המשתמש' };
+            }
+            return { success: false, message: 'חריגת זמן - השלב לא הגיב' };
+        }
+        throw err;
+    } finally {
+        currentAbortController = null;
     }
-
-    return await response.json();
 }
 
 // Show result summary

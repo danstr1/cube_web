@@ -393,6 +393,33 @@
             background: linear-gradient(90deg, var(--danger-color), #c0392b);
         }
 
+        /* Skip Button */
+        .btn-skip {
+            margin-top: 12px;
+            padding: 10px 22px;
+            background: rgba(243, 156, 18, 0.15);
+            border: 1px solid var(--warning-color);
+            border-radius: 8px;
+            color: var(--warning-color);
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+            width: fit-content;
+        }
+
+        .btn-skip:hover {
+            background: rgba(243, 156, 18, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .btn-skip:active {
+            transform: translateY(0);
+        }
+
         /* Stage Progress Items */
         .stage-progress-list {
             display: flex;
@@ -975,6 +1002,30 @@
                             <div class="stage-desc">הפעלת סנכרון שעה עם שרת 10.253.253.1</div>
                         </div>
                     </div>
+
+                    <!-- Stage 7: Relative Mouse -->
+                    <div class="stage-item checked" data-stage="relativeMouse" onclick="toggleStage(this)">
+                        <div class="stage-checkbox">
+                            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                        <div class="stage-icon">🖱️</div>
+                        <div class="stage-content">
+                            <div class="stage-title">העבר עכבר למצב relative</div>
+                            <div class="stage-desc">הגדרת override.yaml עבור mouse absolute: false</div>
+                        </div>
+                    </div>
+
+                    <!-- Stage 8: Disable Close Popup -->
+                    <div class="stage-item checked" data-stage="disableClosePopup" onclick="toggleStage(this)">
+                        <div class="stage-checkbox">
+                            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                        <div class="stage-icon">🚫</div>
+                        <div class="stage-content">
+                            <div class="stage-title">בטל חלון קופץ בעת יציאה</div>
+                            <div class="stage-desc">שינוי page.close.ask ל-false ב-main.js</div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="run-section">
@@ -1005,6 +1056,13 @@
                     <div class="progress-track">
                         <div class="progress-fill" id="progressFill"></div>
                     </div>
+                    <button class="btn-skip" id="skipStageBtn" onclick="skipCurrentStage()" style="display: none;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 4 15 12 5 20 5 4"></polygon>
+                            <line x1="19" y1="5" x2="19" y2="19"></line>
+                        </svg>
+                        דלג על השלב הנוכחי
+                    </button>
                 </div>
 
                 <div class="stage-progress-list" id="stageProgressList"></div>
