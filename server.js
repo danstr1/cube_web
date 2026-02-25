@@ -168,7 +168,7 @@ if __name__ == "__main__":
             host: ipAddress,
             port: 22,
             username: 'root',
-            password: 'root', // Default PiKVM root password - adjust if needed
+            password: getSetupSshPassword(),
             readyTimeout: 10000
         });
     });
