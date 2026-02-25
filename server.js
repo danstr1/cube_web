@@ -715,7 +715,7 @@ function sshExec(conn, command, timeoutMs = 30000) {
     });
 }
 
-// Helper: upload file content via SSH using base64 (with timeout)
+// Helper: upload file content via SFTP (with timeout)
 function sshUploadFile(conn, localFilePath, remotePath, timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
         let fileContent;
@@ -724,27 +724,32 @@ function sshUploadFile(conn, localFilePath, remotePath, timeoutMs = 30000) {
         } catch (err) {
             return reject(new Error(`Cannot read local file: ${localFilePath}`));
         }
-        const base64 = fileContent.toString('base64');
-        // Use printf + base64 to avoid echo issues with binary data
-        const cmd = `echo '${base64}' | base64 -d > ${remotePath}`;
-        let timer = null;
-        conn.exec(cmd, (err, stream) => {
-            if (err) return reject(err);
-            let stdout = '';
-            let stderr = '';
 
-            timer = setTimeout(() => {
-                try { stream.close(); } catch (e) {}
-                reject(new Error(`File upload timed out after ${timeoutMs / 1000}s for ${remotePath}`));
-            }, timeoutMs);
+        let timer = setTimeout(() => {
+            reject(new Error(`File upload timed out after ${timeoutMs / 1000}s for ${remotePath}`));
+        }, timeoutMs);
 
-            stream.on('data', (data) => { stdout += data.toString(); });
-            stream.stderr.on('data', (data) => { stderr += data.toString(); });
-            stream.on('close', (code) => {
-                if (timer) clearTimeout(timer);
-                if (code !== 0) return reject(new Error(`Upload failed (code ${code}): ${stderr}`));
-                resolve({ code, stderr });
+        conn.sftp((err, sftp) => {
+            if (err) {
+                clearTimeout(timer);
+                return reject(new Error(`SFTP session failed: ${err.message}`));
+            }
+
+            const writeStream = sftp.createWriteStream(remotePath);
+
+            writeStream.on('error', (writeErr) => {
+                clearTimeout(timer);
+                sftp.end();
+                reject(new Error(`SFTP write failed for ${remotePath}: ${writeErr.message}`));
             });
+
+            writeStream.on('close', () => {
+                clearTimeout(timer);
+                sftp.end();
+                resolve({ code: 0, stderr: '' });
+            });
+
+            writeStream.end(fileContent);
         });
     });
 }
