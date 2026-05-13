@@ -1,0 +1,1037 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>הגדרת עמדת לקוח - Client Setup</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="css/styles.css">
+
+    <!-- ============================================================ -->
+    <!-- ברירות מחדל - ערוך את הערכים כאן והשדות ימולאו אוטומטית      -->
+    <!-- ============================================================ -->
+    <script>
+        const CLIENT_DEFAULTS = {
+            // שם משתמש SSH לעמדת הלקוח
+            SSH_USERNAME: 'user',
+
+            // סיסמת SSH לעמדת הלקוח
+            SSH_PASSWORD: '',
+
+            // כתובת שרת NTP ברשת
+            NTP_SERVER: '',
+
+            // כתובת CUBE URL (הכתובת שתיפתח בדפדפן)
+            CUBE_URL: '',
+
+            // נתיב לקובץ ההתקנה של Chrome בשרת
+            CHROME_PATH: '',
+        };
+    </script>
+
+    <style>
+        .setup-container {
+            max-width: 800px;
+            width: 100%;
+            padding: 20px;
+        }
+
+        .setup-header {
+            text-align: center;
+            margin-bottom: 35px;
+        }
+
+        .setup-header h1 {
+            font-size: 2rem;
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+        }
+
+        .setup-header p {
+            color: var(--text-muted);
+            font-size: 1rem;
+        }
+
+        .setup-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--border-radius);
+            padding: 30px;
+            margin-bottom: 20px;
+        }
+
+        .setup-card h2 {
+            font-size: 1.3rem;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--glass-border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .ip-input-group {
+            display: flex;
+            gap: 15px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+
+        .ip-input-group .form-group {
+            flex: 1;
+            min-width: 200px;
+            margin-bottom: 0;
+        }
+
+        .ip-input-group input {
+            width: 100%;
+            padding: 14px 18px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 2px solid var(--glass-border);
+            border-radius: 10px;
+            color: var(--text-light);
+            font-size: 1.1rem;
+            font-family: 'Consolas', 'Monaco', monospace;
+            direction: ltr;
+            text-align: left;
+            transition: border-color 0.3s;
+        }
+
+        .ip-input-group input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 15px rgba(52, 152, 219, 0.2);
+        }
+
+        .ip-input-group input::placeholder {
+            color: rgba(255, 255, 255, 0.3);
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 18px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-size: 0.95rem;
+        }
+
+        .connection-status.idle {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--glass-border);
+            color: var(--text-muted);
+        }
+
+        .connection-status.testing {
+            background: rgba(52, 152, 219, 0.15);
+            border: 1px solid var(--primary-color);
+            color: var(--primary-color);
+        }
+
+        .connection-status.success {
+            background: rgba(46, 204, 113, 0.15);
+            border: 1px solid var(--secondary-color);
+            color: var(--secondary-color);
+        }
+
+        .connection-status.error {
+            background: rgba(231, 76, 60, 0.15);
+            border: 1px solid var(--danger-color);
+            color: var(--danger-color);
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: currentColor;
+            flex-shrink: 0;
+        }
+
+        .status-dot.pulse {
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
+        }
+
+        /* Stage Checkboxes */
+        .stages-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .stage-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 16px 20px;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--glass-border);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            user-select: none;
+        }
+
+        .stage-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: var(--primary-color);
+        }
+
+        .stage-item.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .stage-checkbox {
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--glass-border);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: all 0.3s ease;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .stage-item.checked .stage-checkbox {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            border-color: var(--secondary-color);
+        }
+
+        .stage-checkbox svg {
+            width: 14px;
+            height: 14px;
+            stroke: white;
+            stroke-width: 3;
+            fill: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .stage-item.checked .stage-checkbox svg {
+            opacity: 1;
+        }
+
+        .stage-content {
+            flex: 1;
+        }
+
+        .stage-title {
+            font-weight: 600;
+            font-size: 1.05rem;
+            margin-bottom: 3px;
+        }
+
+        .stage-desc {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .stage-icon {
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .stage-status {
+            flex-shrink: 0;
+            font-size: 1.2rem;
+        }
+
+        /* Stage extra inputs */
+        .stage-extra {
+            margin-top: 12px;
+            padding: 12px 15px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .stage-extra label {
+            display: block;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .stage-extra input {
+            width: 100%;
+            padding: 10px 14px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--glass-border);
+            border-radius: 6px;
+            color: var(--text-light);
+            font-family: 'Consolas', monospace;
+            font-size: 0.95rem;
+            direction: ltr;
+            text-align: left;
+        }
+
+        .stage-extra input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        /* Quick Actions */
+        .quick-actions {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .quick-actions button {
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--glass-border);
+            background: var(--glass-bg);
+            color: var(--text-light);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .quick-actions button:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: var(--primary-color);
+        }
+
+        /* Run Button */
+        .run-section {
+            display: flex;
+            gap: 15px;
+            margin-top: 25px;
+            flex-wrap: wrap;
+        }
+
+        .btn-run {
+            flex: 1;
+            min-width: 200px;
+            padding: 18px 30px;
+            background: linear-gradient(135deg, var(--secondary-color), #27ae60);
+            border: none;
+            border-radius: var(--border-radius);
+            color: white;
+            font-size: 1.2rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+
+        .btn-run:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(46, 204, 113, 0.4);
+        }
+
+        .btn-run:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-run.running {
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+            pointer-events: none;
+        }
+
+        /* Progress Section */
+        .progress-section {
+            display: none;
+        }
+
+        .progress-section.active {
+            display: block;
+        }
+
+        .overall-progress {
+            margin-bottom: 25px;
+        }
+
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .progress-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .progress-percent {
+            font-size: 1.3rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .progress-track {
+            width: 100%;
+            height: 12px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid var(--glass-border);
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+            border-radius: 6px;
+            width: 0%;
+            transition: width 0.5s ease-out;
+        }
+
+        .progress-fill.error {
+            background: linear-gradient(90deg, var(--danger-color), #c0392b);
+        }
+
+        /* Skip Button */
+        .btn-skip {
+            margin-top: 12px;
+            padding: 10px 22px;
+            background: rgba(243, 156, 18, 0.15);
+            border: 1px solid var(--warning-color);
+            border-radius: 8px;
+            color: var(--warning-color);
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+            width: fit-content;
+        }
+
+        .btn-skip:hover {
+            background: rgba(243, 156, 18, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .btn-skip:active {
+            transform: translateY(0);
+        }
+
+        /* Stage Progress Items */
+        .stage-progress-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .stage-progress-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 18px;
+            background: rgba(0, 0, 0, 0.15);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .stage-progress-item.running {
+            border-color: var(--primary-color);
+            background: rgba(52, 152, 219, 0.1);
+        }
+
+        .stage-progress-item.completed {
+            border-color: var(--secondary-color);
+            background: rgba(46, 204, 113, 0.08);
+        }
+
+        .stage-progress-item.failed {
+            border-color: var(--danger-color);
+            background: rgba(231, 76, 60, 0.08);
+        }
+
+        .stage-progress-item.skipped {
+            opacity: 0.4;
+        }
+
+        .stage-progress-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            flex-shrink: 0;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--glass-border);
+        }
+
+        .stage-progress-item.running .stage-progress-icon {
+            background: rgba(52, 152, 219, 0.2);
+            border-color: var(--primary-color);
+            animation: pulse 1.5s infinite;
+        }
+
+        .stage-progress-item.completed .stage-progress-icon {
+            background: rgba(46, 204, 113, 0.2);
+            border-color: var(--secondary-color);
+        }
+
+        .stage-progress-item.failed .stage-progress-icon {
+            background: rgba(231, 76, 60, 0.2);
+            border-color: var(--danger-color);
+        }
+
+        .stage-progress-name {
+            flex: 1;
+            font-size: 0.95rem;
+        }
+
+        .stage-progress-status {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .stage-progress-item.running .stage-progress-status {
+            color: var(--primary-color);
+        }
+
+        .stage-progress-item.completed .stage-progress-status {
+            color: var(--secondary-color);
+        }
+
+        .stage-progress-item.failed .stage-progress-status {
+            color: var(--danger-color);
+        }
+
+        /* Log Area */
+        .log-area {
+            margin-top: 20px;
+        }
+
+        .log-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            padding: 10px 0;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            transition: color 0.2s;
+            user-select: none;
+        }
+
+        .log-toggle:hover {
+            color: var(--text-light);
+        }
+
+        .log-toggle svg {
+            transition: transform 0.3s;
+        }
+
+        .log-toggle.open svg {
+            transform: rotate(90deg);
+        }
+
+        .log-content {
+            display: none;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.8rem;
+            direction: ltr;
+            text-align: left;
+            line-height: 1.6;
+        }
+
+        .log-content.open {
+            display: block;
+        }
+
+        .log-line {
+            padding: 2px 0;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-line.info { color: var(--text-muted); }
+        .log-line.success { color: var(--secondary-color); }
+        .log-line.error { color: var(--danger-color); }
+        .log-line.warning { color: var(--warning-color); }
+        .log-line.command { color: var(--primary-color); }
+
+        /* Result Summary */
+        .result-summary {
+            padding: 25px;
+            border-radius: var(--border-radius);
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .result-summary.success {
+            background: rgba(46, 204, 113, 0.15);
+            border: 1px solid var(--secondary-color);
+        }
+
+        .result-summary.partial {
+            background: rgba(243, 156, 18, 0.15);
+            border: 1px solid var(--warning-color);
+        }
+
+        .result-summary.failure {
+            background: rgba(231, 76, 60, 0.15);
+            border: 1px solid var(--danger-color);
+        }
+
+        .result-icon {
+            font-size: 3rem;
+            margin-bottom: 10px;
+        }
+
+        .result-text {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .result-detail {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        /* Back link */
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: color 0.3s;
+            padding: 10px 0;
+            font-size: 0.95rem;
+        }
+
+        .back-link:hover {
+            color: var(--primary-color);
+        }
+
+        /* Password field */
+        .password-group {
+            margin-top: 18px;
+            padding-top: 18px;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .password-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .password-row input {
+            flex: 1;
+            padding: 12px 16px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            color: var(--text-light);
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 1rem;
+            direction: ltr;
+            text-align: left;
+            transition: border-color 0.3s;
+        }
+
+        .password-row input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 10px rgba(52, 152, 219, 0.15);
+        }
+
+        .password-toggle {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 12px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .password-toggle:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-light);
+        }
+
+        .password-label {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .password-label label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Credentials grid */
+        .credentials-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .credentials-grid .form-group {
+            margin-bottom: 0;
+        }
+
+        .credentials-grid label {
+            display: block;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin-bottom: 6px;
+        }
+
+        .credentials-grid input {
+            width: 100%;
+            padding: 12px 16px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            color: var(--text-light);
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 1rem;
+            direction: ltr;
+            text-align: left;
+            transition: border-color 0.3s;
+        }
+
+        .credentials-grid input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 10px rgba(52, 152, 219, 0.15);
+        }
+
+        /* Info box */
+        .info-box {
+            background: rgba(52, 152, 219, 0.1);
+            border: 1px solid rgba(52, 152, 219, 0.3);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-top: 15px;
+            font-size: 0.85rem;
+            color: var(--primary-color);
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .info-box .info-icon {
+            font-size: 1.1rem;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .ip-input-group {
+                flex-direction: column;
+            }
+            .run-section {
+                flex-direction: column;
+            }
+            .credentials-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="background-container"></div>
+    <img src="images/background.jpg" alt="" class="background-image" onerror="this.style.display='none'">
+    <div class="animated-bg">
+        <div class="grid-lines"></div>
+    </div>
+
+    <div class="clock-container">
+        <div class="clock" id="clock">00:00:00</div>
+        <div class="date" id="date"></div>
+    </div>
+
+    <div class="main-container">
+        <div class="setup-container">
+            <a href="/box" class="back-link">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="19" y1="12" x2="5" y2="12"></line>
+                    <polyline points="12 19 5 12 12 5"></polyline>
+                </svg>
+                חזרה ללוח הבקרה
+            </a>
+
+            <div class="setup-header">
+                <h1>🖥️ הגדרת עמדת לקוח</h1>
+                <p>הגדרת מחשב Ubuntu כעמדת צפייה - התקנת תעודות, דפדפן, קיצור דרך ושעון</p>
+            </div>
+
+            <!-- Connection Card -->
+            <div class="setup-card" id="connectionCard">
+                <h2>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
+                    </svg>
+                    חיבור לעמדת הלקוח
+                </h2>
+
+                <div class="ip-input-group">
+                    <div class="form-group">
+                        <label>כתובת IP של העמדה</label>
+                        <input type="text" id="clientIp" placeholder="10.1.1.50" dir="ltr">
+                    </div>
+                    <button class="btn btn-primary" onclick="testConnection()" id="testBtn" style="padding: 14px 25px; white-space: nowrap; margin-bottom: 0;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                        </svg>
+                        בדוק חיבור
+                    </button>
+                </div>
+
+                <div class="connection-status idle" id="connectionStatus">
+                    <div class="status-dot"></div>
+                    <span>הזן כתובת IP ולחץ על "בדוק חיבור"</span>
+                </div>
+
+                <div class="credentials-grid">
+                    <div class="form-group">
+                        <label>👤 שם משתמש SSH</label>
+                        <input type="text" id="sshUsername" value="user" placeholder="user" dir="ltr">
+                    </div>
+                    <div class="form-group">
+                        <label>🔑 סיסמת SSH</label>
+                        <div class="password-row">
+                            <input type="password" id="sshPassword" placeholder="סיסמה" dir="ltr" autocomplete="off">
+                            <button class="password-toggle" onclick="togglePasswordVisibility()" title="הצג/הסתר סיסמה">
+                                <svg id="eyeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configuration Card -->
+            <div class="setup-card" id="configCard">
+                <h2>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                    הגדרות
+                </h2>
+
+                <div class="credentials-grid">
+                    <div class="form-group">
+                        <label>⏰ כתובת שרת NTP</label>
+                        <input type="text" id="ntpServer" placeholder="10.253.253.1" dir="ltr">
+                    </div>
+                    <div class="form-group">
+                        <label>🌐 כתובת CUBE URL</label>
+                        <input type="text" id="cubeUrl" placeholder="https://10.1.1.1" dir="ltr">
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-top: 15px;">
+                    <label style="display: block; color: var(--text-muted); font-size: 0.85rem; margin-bottom: 6px;">📦 נתיב קובץ התקנת Chrome בשרת</label>
+                    <input type="text" id="chromePath" 
+                           placeholder="/path/to/google-chrome-stable.deb" 
+                           dir="ltr" 
+                           style="width: 100%; padding: 12px 16px; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-light); font-family: 'Consolas', monospace; font-size: 0.95rem;">
+                </div>
+
+                <div class="info-box">
+                    <span class="info-icon">💡</span>
+                    <span>יש לוודא שקובץ ה-deb של Chrome נמצא בנתיב שצוין בשרת. הקובץ יועבר לעמדת הלקוח ויותקן אוטומטית.</span>
+                </div>
+            </div>
+
+            <!-- Stages Card -->
+            <div class="setup-card" id="stagesCard">
+                <h2>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                    </svg>
+                    שלבי ההגדרה
+                </h2>
+
+                <div class="quick-actions">
+                    <button onclick="selectAll()">✅ בחר הכל</button>
+                    <button onclick="deselectAll()">⬜ בטל הכל</button>
+                </div>
+
+                <div class="stages-list" id="stagesList">
+                    <!-- Stage 1: Install SSL Certificate -->
+                    <div class="stage-item checked" data-stage="installCert" onclick="toggleStage(this)">
+                        <div class="stage-checkbox">
+                            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                        <div class="stage-icon">🔒</div>
+                        <div class="stage-content">
+                            <div class="stage-title">התקנת תעודת SSL</div>
+                            <div class="stage-desc">העתקת תעודת SSL למחשב הלקוח והתקנתה כתעודה מהימנה - למניעת אזהרות אבטחה בדפדפן</div>
+                        </div>
+                    </div>
+
+                    <!-- Stage 2: Configure NTP -->
+                    <div class="stage-item checked" data-stage="configureNtp" onclick="toggleStage(this)">
+                        <div class="stage-checkbox">
+                            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                        <div class="stage-icon">⏰</div>
+                        <div class="stage-content">
+                            <div class="stage-title">הגדרת שעון (NTP)</div>
+                            <div class="stage-desc">הגדרת סנכרון שעה עם שרת NTP ברשת המקומית</div>
+                        </div>
+                    </div>
+
+                    <!-- Stage 3: Install Chrome -->
+                    <div class="stage-item checked" data-stage="installChrome" onclick="toggleStage(this)">
+                        <div class="stage-checkbox">
+                            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                        <div class="stage-icon">🌐</div>
+                        <div class="stage-content">
+                            <div class="stage-title">התקנת Google Chrome</div>
+                            <div class="stage-desc">העתקת קובץ ההתקנה מהשרת והתקנת Chrome על העמדה</div>
+                        </div>
+                    </div>
+
+                    <!-- Stage 4: Create Desktop Shortcut -->
+                    <div class="stage-item checked" data-stage="createShortcut" onclick="toggleStage(this)">
+                        <div class="stage-checkbox">
+                            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                        <div class="stage-icon">🖥️</div>
+                        <div class="stage-content">
+                            <div class="stage-title">יצירת קיצור דרך בשולחן העבודה</div>
+                            <div class="stage-desc">יצירת אייקון גדול "טל טק" שפותח את Chrome במסך מלא בכתובת CUBE</div>
+                        </div>
+                    </div>
+
+                    <!-- Stage 5: Disable Keyring -->
+                    <div class="stage-item checked" data-stage="disableKeyring" onclick="toggleStage(this)">
+                        <div class="stage-checkbox">
+                            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                        <div class="stage-icon">🔓</div>
+                        <div class="stage-content">
+                            <div class="stage-title">ביטול בקשת סיסמה בדפדפן</div>
+                            <div class="stage-desc">ביטול חלון ה-Keyring שמבקש סיסמה בעת פתיחת Chrome</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="run-section">
+                    <button class="btn-run" id="runBtn" onclick="runSetup()">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                        התחל הגדרה
+                    </button>
+                    <button class="btn btn-secondary" onclick="window.location.href='/box'" style="padding: 18px 25px; font-size: 1.1rem;">ביטול</button>
+                </div>
+            </div>
+
+            <!-- Progress Card -->
+            <div class="setup-card progress-section" id="progressSection">
+                <h2>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                    </svg>
+                    התקדמות ההגדרה
+                </h2>
+
+                <div class="overall-progress">
+                    <div class="progress-header">
+                        <span class="progress-title" id="progressTitle">מכין חיבור...</span>
+                        <span class="progress-percent" id="progressPercent">0%</span>
+                    </div>
+                    <div class="progress-track">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <button class="btn-skip" id="skipStageBtn" onclick="skipCurrentStage()" style="display: none;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 4 15 12 5 20 5 4"></polygon>
+                            <line x1="19" y1="5" x2="19" y2="19"></line>
+                        </svg>
+                        דלג על השלב הנוכחי
+                    </button>
+                </div>
+
+                <div class="stage-progress-list" id="stageProgressList"></div>
+
+                <!-- Log -->
+                <div class="log-area">
+                    <div class="log-toggle" id="logToggle" onclick="toggleLog()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                        <span>הצג יומן מפורט</span>
+                    </div>
+                    <div class="log-content" id="logContent"></div>
+                </div>
+
+                <!-- Result Summary -->
+                <div class="result-summary hidden" id="resultSummary">
+                    <div class="result-icon" id="resultIcon"></div>
+                    <div class="result-text" id="resultText"></div>
+                    <div class="result-detail" id="resultDetail"></div>
+                </div>
+
+                <div class="run-section" id="postActions" style="display: none;">
+                    <button class="btn btn-primary" onclick="resetForm()" style="padding: 14px 25px; flex: 1;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                        </svg>
+                        הגדר עמדה נוספת
+                    </button>
+                    <button class="btn btn-secondary" onclick="window.location.href='/box'" style="padding: 14px 25px;">חזור ללוח הבקרה</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/common.js"></script>
+    <script src="js/client.js"></script>
+</body>
+</html>
