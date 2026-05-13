@@ -308,9 +308,9 @@ function showAdminChoiceModal() {
         }, 10);
     }
     
-    // Auto-select "Get Box" after 3 seconds
+    // Auto-select "Admin Panel" after 3 seconds
     adminChoiceTimeoutId = setTimeout(() => {
-        proceedAsUser();
+        proceedAsAdmin();
     }, 3000);
 }
 

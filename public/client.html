@@ -1116,19 +1116,19 @@
                             ✅ הסקריפט הורד בהצלחה!
                         </div>
                         <div style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 14px;">
-                            העבר את הקובץ לעמדת הלקוח והרץ את הפקודה הבאה בטרמינל:
+                            כעת פתח טרמינל בעמדת הלקוח והרץ את הפקודה הבאה:
                         </div>
                         <div style="display: flex; gap: 8px; align-items: center;">
                             <code id="scriptCommand" style="flex: 1; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); border-radius: 8px; padding: 14px 18px; font-family: 'Consolas', monospace; font-size: 1.05rem; color: var(--primary-color); direction: ltr; text-align: left; user-select: all;">sudo bash ~/Downloads/setup-client.sh</code>
-                            <button onclick="copyScriptCommand()" style="background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-muted); cursor: pointer; padding: 14px; transition: all 0.2s; flex-shrink: 0;" title="העתק">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <button id="copyCommandBtn" onclick="copyScriptCommand()" style="background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-muted); cursor: pointer; padding: 14px; transition: all 0.2s; flex-shrink: 0; position: relative;" title="העתק פקודה">
+                                <svg id="copyIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                                 </svg>
                             </button>
                         </div>
                         <div style="color: var(--text-muted); font-size: 0.8rem; margin-top: 10px; opacity: 0.7;">
-                            💡 הפקודה <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; font-size: 0.8rem;">bash</code> מריצה את הסקריפט ישירות — אין צורך ב-chmod
+                            💡 הפקודה <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; font-size: 0.8rem;">sudo bash</code> מריצה את הסקריפט ישירות — אין צורך ב-chmod
                         </div>
                     </div>
                 </div>

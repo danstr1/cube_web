@@ -651,17 +651,59 @@ async function downloadScript() {
 // Copy the bash command to clipboard
 function copyScriptCommand() {
     const cmd = document.getElementById('scriptCommand');
+    const btn = document.getElementById('copyCommandBtn');
     if (!cmd) return;
-    const text = cmd.textContent;
-    navigator.clipboard.writeText(text).then(() => {
-        const original = cmd.style.borderColor;
+    const text = cmd.textContent.trim();
+
+    function showCopied() {
+        // Visual feedback on the button
+        btn.style.borderColor = 'var(--secondary-color)';
+        btn.style.background = 'rgba(46, 204, 113, 0.15)';
+        const icon = document.getElementById('copyIcon');
+        icon.innerHTML = '<polyline points="20 6 9 17 4 12" stroke="var(--secondary-color)" stroke-width="3" fill="none"></polyline>';
+        // Highlight the code box
         cmd.style.borderColor = 'var(--secondary-color)';
-        setTimeout(() => { cmd.style.borderColor = original; }, 1000);
-    }).catch(() => {
-        // Fallback: select the text
+        cmd.style.color = 'var(--secondary-color)';
+        setTimeout(() => {
+            btn.style.borderColor = '';
+            btn.style.background = '';
+            cmd.style.borderColor = '';
+            cmd.style.color = '';
+            icon.innerHTML = '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>';
+        }, 1500);
+    }
+
+    // Try modern clipboard API first
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(showCopied).catch(() => {
+            // Fallback for non-HTTPS
+            fallbackCopy(text, showCopied);
+        });
+    } else {
+        fallbackCopy(text, showCopied);
+    }
+}
+
+// Fallback copy using textarea trick (works on HTTP)
+function fallbackCopy(text, onSuccess) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+        document.execCommand('copy');
+        if (onSuccess) onSuccess();
+    } catch (e) {
+        // Last resort: select the text visually
+        const cmd = document.getElementById('scriptCommand');
         const range = document.createRange();
         range.selectNodeContents(cmd);
         window.getSelection().removeAllRanges();
         window.getSelection().addRange(range);
-    });
+    }
+    document.body.removeChild(textarea);
 }
