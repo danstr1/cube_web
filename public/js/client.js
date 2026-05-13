@@ -32,6 +32,7 @@ const STAGES = {
 let isRunning = false;
 let currentAbortController = null;
 let skipRequested = false;
+let currentMode = 'script'; // 'script' or 'ssh'
 
 const STAGE_TIMEOUT_MS = 120000; // 120 second timeout per stage (Chrome install may take longer)
 
@@ -40,8 +41,40 @@ const STAGE_TIMEOUT_MS = 120000; // 120 second timeout per stage (Chrome install
 // ==============================
 document.addEventListener('DOMContentLoaded', () => {
     loadDefaults();
-    autoDetectClientIp();
+    setMode('script'); // default mode
 });
+
+// ==============================
+// Mode Toggle
+// ==============================
+function setMode(mode) {
+    currentMode = mode;
+
+    // Toggle active button
+    document.getElementById('modeScript').classList.toggle('active', mode === 'script');
+    document.getElementById('modeSsh').classList.toggle('active', mode === 'ssh');
+
+    // Update description
+    const desc = document.getElementById('modeDesc');
+    if (mode === 'script') {
+        desc.textContent = 'מצב סקריפט — יופק קובץ bash שניתן להוריד ולהריץ ישירות על העמדה. מתאים כאשר אין SSH מותקן.';
+    } else {
+        desc.textContent = 'מצב SSH — השרת מתחבר ישירות לעמדה דרך SSH ומבצע את כל השלבים. דורש SSH פעיל בעמדה.';
+    }
+
+    // Show/hide sections
+    document.querySelectorAll('.ssh-only').forEach(el => {
+        el.style.display = mode === 'ssh' ? '' : 'none';
+    });
+    document.querySelectorAll('.script-only').forEach(el => {
+        el.style.display = mode === 'script' ? '' : 'none';
+    });
+
+    // Auto-detect IP only in SSH mode
+    if (mode === 'ssh') {
+        autoDetectClientIp();
+    }
+}
 
 // Auto-detect the browsing machine's IP and fill the field
 async function autoDetectClientIp() {
@@ -68,6 +101,7 @@ function loadDefaults() {
         NTP_SERVER:   'ntpServer',
         CUBE_URL:     'cubeUrl',
         CHROME_PATH:  'chromePath',
+        SERVER_URL:   'serverUrl',
     };
 
     for (const [key, elementId] of Object.entries(fieldMap)) {
@@ -521,4 +555,88 @@ function resetForm() {
     selectAll();
 
     window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ==============================
+// Script Mode - Download Script
+// ==============================
+async function downloadScript() {
+    const ntpServer = document.getElementById('ntpServer').value.trim();
+    const cubeUrl = document.getElementById('cubeUrl').value.trim();
+    const chromePath = document.getElementById('chromePath').value.trim();
+    const serverUrl = document.getElementById('serverUrl').value.trim();
+    const selectedStages = getSelectedStages();
+
+    // Validation
+    if (selectedStages.length === 0) {
+        alert('אנא בחר לפחות שלב אחד');
+        return;
+    }
+
+    if (selectedStages.includes('configureNtp') && !ntpServer) {
+        alert('אנא הזן כתובת שרת NTP עבור שלב הגדרת השעון');
+        return;
+    }
+
+    if (selectedStages.includes('createShortcut') && !cubeUrl) {
+        alert('אנא הזן כתובת CUBE URL עבור שלב יצירת קיצור הדרך');
+        return;
+    }
+
+    if (selectedStages.includes('installChrome') && !chromePath && !serverUrl) {
+        alert('אנא הזן נתיב Chrome או כתובת שרת כדי להוריד את Chrome');
+        return;
+    }
+
+    if ((selectedStages.includes('installChrome') || selectedStages.includes('installCert')) && !serverUrl) {
+        alert('אנא הזן את כתובת השרת — הסקריפט צריך להוריד ממנו קבצים');
+        return;
+    }
+
+    const btn = document.getElementById('downloadBtn');
+    btn.disabled = true;
+    btn.innerHTML = `<div class="spinner" style="width:24px; height:24px; border-width:3px;"></div> מייצר סקריפט...`;
+
+    try {
+        const response = await fetch('/api/client-setup/generate-script', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                stages: selectedStages,
+                ntpServer,
+                cubeUrl,
+                chromePath,
+                serverUrl
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            alert(err.message || 'שגיאה ביצירת הסקריפט');
+            return;
+        }
+
+        // Download the script file
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'setup-client.sh';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    } catch (err) {
+        alert('שגיאת רשת: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = `
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            הורד סקריפט הגדרה
+        `;
+    }
 }

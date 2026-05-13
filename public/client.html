@@ -26,6 +26,9 @@
 
             // נתיב לקובץ ההתקנה של Chrome בשרת
             CHROME_PATH: 'public/setup/google-chrome.deb',
+
+            // כתובת השרת (לגישה מעמדת הלקוח בעת הרצת הסקריפט)
+            SERVER_URL: '',
         };
     </script>
 
@@ -757,6 +760,97 @@
             margin-top: 1px;
         }
 
+        /* Mode Toggle */
+        .mode-toggle {
+            display: flex;
+            gap: 0;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid var(--glass-border);
+            margin-bottom: 20px;
+        }
+
+        .mode-btn {
+            flex: 1;
+            padding: 14px 20px;
+            background: rgba(0, 0, 0, 0.2);
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: all 0.3s;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .mode-btn:not(:last-child) {
+            border-left: 1px solid var(--glass-border);
+        }
+
+        .mode-btn.active {
+            background: rgba(52, 152, 219, 0.25);
+            color: var(--primary-color);
+            font-weight: 700;
+        }
+
+        .mode-btn:hover:not(.active) {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .mode-desc {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 10px 15px;
+            background: rgba(52, 152, 219, 0.08);
+            border-radius: 8px;
+            border: 1px solid rgba(52, 152, 219, 0.15);
+        }
+
+        .ssh-only {
+            /* visibility controlled by JS */
+            transition: opacity 0.2s;
+        }
+
+        .script-only {
+            /* visibility controlled by JS */
+            transition: opacity 0.2s;
+        }
+
+        /* Download button */
+        .btn-download {
+            flex: 1;
+            min-width: 200px;
+            padding: 18px 30px;
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+            border: none;
+            border-radius: var(--border-radius);
+            color: white;
+            font-size: 1.2rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+
+        .btn-download:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(52, 152, 219, 0.4);
+        }
+
+        .btn-download:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         /* Responsive */
         @media (max-width: 600px) {
             .ip-input-group {
@@ -798,8 +892,29 @@
                 <p>הגדרת מחשב Ubuntu כעמדת צפייה - התקנת תעודות, דפדפן, קיצור דרך ושעון</p>
             </div>
 
-            <!-- Connection Card -->
-            <div class="setup-card" id="connectionCard">
+            <!-- Mode Toggle -->
+            <div class="setup-card">
+                <h2>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                        <path d="M2 17l10 5 10-5"></path>
+                        <path d="M2 12l10 5 10-5"></path>
+                    </svg>
+                    בחירת מצב הפעלה
+                </h2>
+                <div class="mode-toggle">
+                    <button class="mode-btn active" id="modeScript" onclick="setMode('script')">
+                        📜 מצב סקריפט
+                    </button>
+                    <button class="mode-btn" id="modeSsh" onclick="setMode('ssh')">
+                        🔌 מצב SSH
+                    </button>
+                </div>
+                <div class="mode-desc" id="modeDesc">מצב סקריפט — יופק קובץ bash שניתן להוריד ולהריץ ישירות על העמדה. מתאים כאשר אין SSH מותקן.</div>
+            </div>
+
+            <!-- Connection Card (SSH mode only) -->
+            <div class="setup-card ssh-only" id="connectionCard">
                 <h2>
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
@@ -875,9 +990,22 @@
                            style="width: 100%; padding: 12px 16px; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-light); font-family: 'Consolas', monospace; font-size: 0.95rem;">
                 </div>
 
-                <div class="info-box">
+                <div class="form-group script-only" style="margin-top: 15px;">
+                    <label style="display: block; color: var(--text-muted); font-size: 0.85rem; margin-bottom: 6px;">🖧 כתובת השרת (לגישה מהעמדה)</label>
+                    <input type="text" id="serverUrl" 
+                           placeholder="http://10.1.1.100:3000" 
+                           dir="ltr" 
+                           style="width: 100%; padding: 12px 16px; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-light); font-family: 'Consolas', monospace; font-size: 0.95rem;">
+                </div>
+
+                <div class="info-box ssh-only">
                     <span class="info-icon">💡</span>
                     <span>יש לוודא שקובץ ה-deb של Chrome נמצא בנתיב שצוין בשרת. הקובץ יועבר לעמדת הלקוח ויותקן אוטומטית.</span>
+                </div>
+
+                <div class="info-box script-only">
+                    <span class="info-icon">💡</span>
+                    <span>הסקריפט יוריד את קובץ Chrome ואת תעודת ה-SSL מהשרת. יש לוודא שכתובת השרת נגישה מעמדת הלקוח.</span>
                 </div>
             </div>
 
@@ -960,12 +1088,23 @@
                     </div>
                 </div>
 
-                <div class="run-section">
+                <div class="run-section ssh-only" id="sshRunSection">
                     <button class="btn-run" id="runBtn" onclick="runSetup()">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polygon points="5 3 19 12 5 21 5 3"></polygon>
                         </svg>
                         התחל הגדרה
+                    </button>
+                    <button class="btn btn-secondary" onclick="window.location.href='/box'" style="padding: 18px 25px; font-size: 1.1rem;">ביטול</button>
+                </div>
+                <div class="run-section script-only" id="scriptRunSection">
+                    <button class="btn-download" id="downloadBtn" onclick="downloadScript()">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        הורד סקריפט הגדרה
                     </button>
                     <button class="btn btn-secondary" onclick="window.location.href='/box'" style="padding: 18px 25px; font-size: 1.1rem;">ביטול</button>
                 </div>

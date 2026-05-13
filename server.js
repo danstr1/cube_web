@@ -1610,6 +1610,379 @@ print('Updated')
     return { success: true, message: 'בקשת סיסמה של Keyring בוטלה - Chrome יפעל ללא חלון סיסמה' };
 }
 
+// ============================================================
+// Client Setup - Script Mode (generate downloadable bash script)
+// ============================================================
+
+// Serve certificate for script download
+app.get('/api/client-setup/download/cert', (req, res) => {
+    const certPath = path.join(SETUP_DIR, 'server.crt');
+    if (!fs.existsSync(certPath)) {
+        return res.status(404).json({ message: 'server.crt not found in setup folder' });
+    }
+    res.download(certPath, 'server.crt');
+});
+
+// Serve Chrome deb for script download
+app.get('/api/client-setup/download/chrome', (req, res) => {
+    const chromePath = path.join(SETUP_DIR, 'google-chrome.deb');
+    if (!fs.existsSync(chromePath)) {
+        return res.status(404).json({ message: 'google-chrome.deb not found in setup folder' });
+    }
+    res.download(chromePath, 'google-chrome.deb');
+});
+
+// Generate setup bash script
+app.post('/api/client-setup/generate-script', (req, res) => {
+    const { stages, ntpServer, cubeUrl, chromePath, serverUrl } = req.body;
+
+    if (!stages || stages.length === 0) {
+        return res.status(400).json({ message: 'No stages selected' });
+    }
+
+    // Read certificate for embedding in script
+    let certBase64 = '';
+    if (stages.includes('installCert')) {
+        const certPath = path.join(SETUP_DIR, 'server.crt');
+        if (fs.existsSync(certPath)) {
+            certBase64 = fs.readFileSync(certPath).toString('base64');
+        }
+    }
+
+    // Determine chrome download URL
+    let chromeDownloadUrl = '';
+    if (stages.includes('installChrome') && serverUrl) {
+        chromeDownloadUrl = `${serverUrl.replace(/\/+$/, '')}/api/client-setup/download/chrome`;
+    }
+
+    // Build the script
+    let script = `#!/bin/bash
+# =============================================================
+# סקריפט הגדרת עמדת לקוח - טל טק
+# נוצר אוטומטית ב-$(date)
+# =============================================================
+
+set -e
+
+# Colors for output
+RED='\\033[0;31m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+BLUE='\\033[0;34m'
+NC='\\033[0m' # No Color
+
+echo -e "\${BLUE}========================================\${NC}"
+echo -e "\${BLUE}   הגדרת עמדת לקוח - טל טק\${NC}"
+echo -e "\${BLUE}========================================\${NC}"
+echo ""
+
+# Check if running as root or with sudo
+if [ "$EUID" -ne 0 ]; then
+    echo -e "\${YELLOW}[!] הסקריפט דורש הרשאות root. מנסה עם sudo...\${NC}"
+    exec sudo bash "$0" "$@"
+fi
+
+FAILED=0
+PASSED=0
+TOTAL=${stages.length}
+
+`;
+
+    // Stage: Install SSL Certificate
+    if (stages.includes('installCert')) {
+        script += `
+# ──────────────────────────────────────
+# שלב: התקנת תעודת SSL
+# ──────────────────────────────────────
+echo -e "\${BLUE}[*] מתקין תעודת SSL...\${NC}"
+`;
+        if (certBase64) {
+            script += `CERT_B64="${certBase64}"
+echo "$CERT_B64" | base64 -d > /usr/local/share/ca-certificates/pikvm-server.crt
+update-ca-certificates 2>/dev/null
+
+# Install for Chrome/NSS
+apt-get install -y libnss3-tools 2>/dev/null || true
+
+# Add cert to all NSS databases
+CERT_FILE="/usr/local/share/ca-certificates/pikvm-server.crt"
+for certDB in $(find /home/ -name "cert9.db" 2>/dev/null | sed 's|/cert9.db||'); do
+    certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$certDB" 2>/dev/null || true
+done
+
+# Also add to default NSS db for each user
+for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+        nss_dir="$user_home/.pki/nssdb"
+        mkdir -p "$nss_dir" 2>/dev/null || true
+        certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$nss_dir" 2>/dev/null || true
+        # Fix ownership
+        real_user=$(basename "$user_home")
+        chown -R "$real_user:$real_user" "$nss_dir" 2>/dev/null || true
+    fi
+done
+
+echo -e "\${GREEN}[✓] תעודת SSL הותקנה בהצלחה\${NC}"
+PASSED=$((PASSED + 1))
+`;
+        } else {
+            script += `echo -e "\${RED}[✗] תעודת SSL לא נמצאה בשרת בעת יצירת הסקריפט\${NC}"
+FAILED=$((FAILED + 1))
+`;
+        }
+    }
+
+    // Stage: Configure NTP
+    if (stages.includes('configureNtp')) {
+        script += `
+# ──────────────────────────────────────
+# שלב: הגדרת NTP
+# ──────────────────────────────────────
+echo -e "\${BLUE}[*] מגדיר שעון NTP (${ntpServer || 'NOT SET'})...\${NC}"
+`;
+        if (ntpServer) {
+            script += `cat > /etc/systemd/timesyncd.conf << 'NTPEOF'
+[Time]
+NTP=${ntpServer}
+FallbackNTP=${ntpServer}
+NTPEOF
+
+systemctl enable systemd-timesyncd 2>/dev/null
+systemctl restart systemd-timesyncd 2>/dev/null
+timedatectl set-ntp true 2>/dev/null
+echo -e "\${GREEN}[✓] NTP הוגדר עם שרת ${ntpServer}\${NC}"
+PASSED=$((PASSED + 1))
+`;
+        } else {
+            script += `echo -e "\${RED}[✗] כתובת שרת NTP לא הוגדרה\${NC}"
+FAILED=$((FAILED + 1))
+`;
+        }
+    }
+
+    // Stage: Install Chrome
+    if (stages.includes('installChrome')) {
+        script += `
+# ──────────────────────────────────────
+# שלב: התקנת Google Chrome
+# ──────────────────────────────────────
+echo -e "\${BLUE}[*] מתקין Google Chrome...\${NC}"
+`;
+        if (chromeDownloadUrl) {
+            script += `CHROME_URL="${chromeDownloadUrl}"
+CHROME_DEB="/tmp/google-chrome.deb"
+
+# Try wget first, then curl
+if command -v wget &>/dev/null; then
+    wget -q --no-check-certificate -O "$CHROME_DEB" "$CHROME_URL"
+elif command -v curl &>/dev/null; then
+    curl -sLk -o "$CHROME_DEB" "$CHROME_URL"
+else
+    echo -e "\${RED}[✗] לא נמצא wget או curl - לא ניתן להוריד Chrome\${NC}"
+    FAILED=$((FAILED + 1))
+    CHROME_DEB=""
+fi
+
+if [ -n "$CHROME_DEB" ] && [ -f "$CHROME_DEB" ]; then
+    dpkg -i "$CHROME_DEB" 2>/dev/null || apt-get install -f -y 2>/dev/null
+    rm -f "$CHROME_DEB"
+
+    if command -v google-chrome-stable &>/dev/null || command -v google-chrome &>/dev/null; then
+        echo -e "\${GREEN}[✓] Google Chrome הותקן בהצלחה\${NC}"
+        PASSED=$((PASSED + 1))
+    else
+        echo -e "\${RED}[✗] ההתקנה נכשלה - Chrome לא נמצא\${NC}"
+        FAILED=$((FAILED + 1))
+    fi
+fi
+`;
+        } else {
+            script += `echo -e "\${RED}[✗] כתובת שרת לא הוגדרה - לא ניתן להוריד Chrome\${NC}"
+FAILED=$((FAILED + 1))
+`;
+        }
+    }
+
+    // Stage: Create Desktop Shortcut
+    if (stages.includes('createShortcut')) {
+        const escapedUrl = (cubeUrl || '').replace(/'/g, "'\\''");
+        script += `
+# ──────────────────────────────────────
+# שלב: יצירת קיצור דרך בשולחן העבודה
+# ──────────────────────────────────────
+echo -e "\${BLUE}[*] יוצר קיצור דרך בשולחן העבודה...\${NC}"
+`;
+        if (cubeUrl) {
+            script += `
+# Create icon SVG
+ICON_SVG='<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3498db;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2ecc71;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="40" fill="url(#bg)"/>
+  <text x="128" y="100" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" font-weight="bold" fill="white">טל</text>
+  <text x="128" y="160" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" font-weight="bold" fill="white">טק</text>
+  <rect x="48" y="180" width="160" height="4" rx="2" fill="rgba(255,255,255,0.5)"/>
+  <text x="128" y="215" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="rgba(255,255,255,0.9)">CUBE</text>
+</svg>'
+
+for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+        real_user=$(basename "$user_home")
+
+        # Save icon
+        icon_dir="$user_home/.local/share/icons"
+        mkdir -p "$icon_dir"
+        echo "$ICON_SVG" > "$icon_dir/taltek-cube.svg"
+
+        # Try to make PNG version
+        if command -v rsvg-convert &>/dev/null; then
+            rsvg-convert -w 256 -h 256 "$icon_dir/taltek-cube.svg" > "$icon_dir/taltek-cube.png" 2>/dev/null || true
+        fi
+
+        # Determine icon path
+        if [ -f "$icon_dir/taltek-cube.png" ]; then
+            ICON_PATH="$icon_dir/taltek-cube.png"
+        else
+            ICON_PATH="$icon_dir/taltek-cube.svg"
+        fi
+
+        # Create desktop file
+        desktop_dir="$user_home/Desktop"
+        mkdir -p "$desktop_dir"
+        cat > "$desktop_dir/taltek-cube.desktop" << DESKTOPEOF
+[Desktop Entry]
+Name=טל טק
+Comment=פתח את מערכת CUBE
+Exec=google-chrome-stable --start-fullscreen --no-first-run --disable-session-crashed-bubble --disable-infobars --password-store=basic '${escapedUrl}'
+Icon=$ICON_PATH
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+StartupWMClass=Google-chrome-stable
+DESKTOPEOF
+
+        chmod +x "$desktop_dir/taltek-cube.desktop"
+        chown -R "$real_user:$real_user" "$icon_dir" "$desktop_dir/taltek-cube.desktop" 2>/dev/null || true
+
+        # Trust the desktop file (GNOME)
+        su - "$real_user" -c "gio set '$desktop_dir/taltek-cube.desktop' metadata::trusted true" 2>/dev/null || true
+    fi
+done
+
+# Set desktop icon size to large
+for user_home in /home/*; do
+    real_user=$(basename "$user_home")
+    su - "$real_user" -c "gsettings set org.gnome.nautilus.icon-view default-zoom-level 'extra-large'" 2>/dev/null || true
+done
+
+echo -e "\${GREEN}[✓] קיצור דרך 'טל טק' נוצר בשולחן העבודה\${NC}"
+PASSED=$((PASSED + 1))
+`;
+        } else {
+            script += `echo -e "\${RED}[✗] כתובת CUBE URL לא הוגדרה\${NC}"
+FAILED=$((FAILED + 1))
+`;
+        }
+    }
+
+    // Stage: Disable Keyring
+    if (stages.includes('disableKeyring')) {
+        script += `
+# ──────────────────────────────────────
+# שלב: ביטול בקשת סיסמה (Keyring)
+# ──────────────────────────────────────
+echo -e "\${BLUE}[*] מבטל בקשת סיסמה של Keyring...\${NC}"
+
+# Fix Chrome desktop files system-wide
+for f in /usr/share/applications/google-chrome.desktop /usr/share/applications/google-chrome-stable.desktop; do
+    if [ -f "$f" ]; then
+        sed -i 's|Exec=/usr/bin/google-chrome-stable|Exec=/usr/bin/google-chrome-stable --password-store=basic|g' "$f" 2>/dev/null || true
+        # Avoid duplicating the flag
+        sed -i 's|--password-store=basic --password-store=basic|--password-store=basic|g' "$f" 2>/dev/null || true
+    fi
+done
+
+for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+        real_user=$(basename "$user_home")
+
+        # Create keyring directory and default keyring with empty password
+        keyring_dir="$user_home/.local/share/keyrings"
+        mkdir -p "$keyring_dir"
+        
+        if [ ! -f "$keyring_dir/default" ]; then
+            echo "Default_keyring" > "$keyring_dir/default"
+        fi
+        chown -R "$real_user:$real_user" "$keyring_dir" 2>/dev/null || true
+
+        # Disable keyring secrets autostart override
+        autostart_dir="$user_home/.config/autostart"
+        mkdir -p "$autostart_dir"
+        cat > "$autostart_dir/gnome-keyring-secrets.desktop" << 'KEYRINGEOF'
+[Desktop Entry]
+Type=Application
+Name=Secret Storage Service
+Exec=/usr/bin/gnome-keyring-daemon --start --components=pkcs11
+Hidden=false
+X-GNOME-Autostart-enabled=true
+KEYRINGEOF
+        chown -R "$real_user:$real_user" "$autostart_dir" 2>/dev/null || true
+
+        # Disable Chrome password manager via Preferences
+        chrome_prefs_dir="$user_home/.config/google-chrome/Default"
+        prefs_file="$chrome_prefs_dir/Preferences"
+        if [ -f "$prefs_file" ]; then
+            python3 -c "
+import json
+try:
+    with open('$prefs_file', 'r') as f:
+        prefs = json.load(f)
+except:
+    prefs = {}
+prefs['credentials_enable_service'] = False
+if 'profile' not in prefs:
+    prefs['profile'] = {}
+prefs['profile']['password_manager_enabled'] = False
+with open('$prefs_file', 'w') as f:
+    json.dump(prefs, f, indent=2)
+" 2>/dev/null || true
+            chown "$real_user:$real_user" "$prefs_file" 2>/dev/null || true
+        fi
+    fi
+done
+
+echo -e "\${GREEN}[✓] בקשת סיסמה של Keyring בוטלה\${NC}"
+PASSED=$((PASSED + 1))
+`;
+    }
+
+    // Summary
+    script += `
+# ──────────────────────────────────────
+# סיכום
+# ──────────────────────────────────────
+echo ""
+echo -e "\${BLUE}========================================\${NC}"
+if [ $FAILED -eq 0 ]; then
+    echo -e "\${GREEN}  ✅ כל $TOTAL השלבים הושלמו בהצלחה!\${NC}"
+else
+    echo -e "\${YELLOW}  ⚠️  $PASSED הצליחו, $FAILED נכשלו מתוך $TOTAL\${NC}"
+fi
+echo -e "\${BLUE}========================================\${NC}"
+echo ""
+`;
+
+    // Send the script as a downloadable file
+    res.setHeader('Content-Type', 'application/x-sh');
+    res.setHeader('Content-Disposition', 'attachment; filename="setup-client.sh"');
+    res.send(script);
+});
+
 // Client setup page route
 app.get('/client', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'client.html'));
