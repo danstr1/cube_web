@@ -626,6 +626,13 @@ async function downloadScript() {
         a.click();
         document.body.removeChild(a);
         window.URL.revokeObjectURL(url);
+
+        // Show post-download instructions
+        const instructionsEl = document.getElementById('scriptInstructions');
+        if (instructionsEl) {
+            instructionsEl.style.display = 'block';
+            instructionsEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
     } catch (err) {
         alert('שגיאת רשת: ' + err.message);
     } finally {
@@ -639,4 +646,22 @@ async function downloadScript() {
             הורד סקריפט הגדרה
         `;
     }
+}
+
+// Copy the bash command to clipboard
+function copyScriptCommand() {
+    const cmd = document.getElementById('scriptCommand');
+    if (!cmd) return;
+    const text = cmd.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        const original = cmd.style.borderColor;
+        cmd.style.borderColor = 'var(--secondary-color)';
+        setTimeout(() => { cmd.style.borderColor = original; }, 1000);
+    }).catch(() => {
+        // Fallback: select the text
+        const range = document.createRange();
+        range.selectNodeContents(cmd);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+    });
 }

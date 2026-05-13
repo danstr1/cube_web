@@ -1317,10 +1317,22 @@ async function clientStageInstallCert(conn, sudoPassword) {
     }
 
     // Also install for NSS (Chrome/Firefox use NSS database)
-    // Install certutil if needed, then add cert to NSS db
+    // Install certutil from local .deb if available (no internet)
+    const nssDebPath = path.join(SETUP_DIR, 'libnss3-tools.deb');
+    if (fs.existsSync(nssDebPath)) {
+        // Check if certutil is already available
+        const certutilCheck = await sshExec(conn, 'which certutil 2>/dev/null', 5000).catch(() => ({ stdout: '' }));
+        if (!certutilCheck.stdout.includes('certutil')) {
+            // Upload and install libnss3-tools from local .deb
+            const nssDebContent = fs.readFileSync(nssDebPath);
+            await sshUploadBuffer(conn, nssDebContent, '/tmp/libnss3-tools.deb', 30000);
+            await sshExec(conn, `echo '${sudoPassword}' | sudo -S dpkg -i /tmp/libnss3-tools.deb 2>&1 || true`, 30000);
+            await sshExec(conn, 'rm -f /tmp/libnss3-tools.deb', 5000);
+        }
+    }
+
+    // Re-upload cert for NSS processing
     const nssCommands = [
-        `echo '${sudoPassword}' | sudo -S apt-get install -y libnss3-tools 2>&1 || true`,
-        // Re-upload cert for NSS processing
         `echo '${sudoPassword}' | sudo -S cp /usr/local/share/ca-certificates/pikvm-server.crt /tmp/pikvm-server.crt 2>&1`,
     ];
 
@@ -1502,12 +1514,26 @@ StartupWMClass=Google-chrome-stable
     // Make it executable
     await sshExec(conn, `chmod +x '${desktopPath}'`, 10000);
 
-    // Trust the desktop file (GNOME)
-    // For GNOME, we need to mark it as trusted using gio
-    await sshExec(conn, `gio set '${desktopPath}' metadata::trusted true 2>/dev/null || true`, 10000);
-    
-    // Also set as allowed to launch (Ubuntu 22.04+)
-    await sshExec(conn, `dbus-launch gio set '${desktopPath}' metadata::trusted true 2>/dev/null || true`, 10000);
+    // Trust the desktop file (GNOME) — create a one-time autostart entry
+    // that runs on next login, trusts the .desktop file, then removes itself.
+    // This is the only reliable way because gio needs the user's D-Bus session.
+    const autostartDir = `${homeDir}/.config/autostart`;
+    await sshExec(conn, `mkdir -p '${autostartDir}'`, 5000);
+
+    const trustScript = `[Desktop Entry]
+Type=Application
+Name=Trust TalTek Shortcut
+Exec=bash -c 'sleep 3 && gio set "${desktopPath}" metadata::trusted true 2>/dev/null; rm -f "${autostartDir}/trust-taltek.desktop"'
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+`;
+    const trustBase64 = Buffer.from(trustScript).toString('base64');
+    await sshExec(conn, `echo '${trustBase64}' | base64 -d > '${autostartDir}/trust-taltek.desktop'`, 10000);
+    await sshExec(conn, `chmod +x '${autostartDir}/trust-taltek.desktop'`, 5000);
+
+    // Also try direct gio in case user is currently logged in
+    await sshExec(conn, `su - ${username} -c "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u ${username})/bus gio set '${desktopPath}' metadata::trusted true" 2>/dev/null || true`, 10000);
 
     // Make the icon larger on the desktop by updating desktop grid settings if possible
     // Set GNOME desktop icon size to large
@@ -1623,6 +1649,15 @@ app.get('/api/client-setup/download/cert', (req, res) => {
     res.download(certPath, 'server.crt');
 });
 
+// Serve libnss3-tools deb for script download
+app.get('/api/client-setup/download/libnss3-tools', (req, res) => {
+    const debPath = path.join(SETUP_DIR, 'libnss3-tools.deb');
+    if (!fs.existsSync(debPath)) {
+        return res.status(404).json({ message: 'libnss3-tools.deb not found in setup folder' });
+    }
+    res.download(debPath, 'libnss3-tools.deb');
+});
+
 // Serve Chrome deb for script download
 app.get('/api/client-setup/download/chrome', (req, res) => {
     const chromePath = path.join(SETUP_DIR, 'google-chrome.deb');
@@ -1701,28 +1736,51 @@ echo -e "\${BLUE}[*] מתקין תעודת SSL...\${NC}"
 echo "$CERT_B64" | base64 -d > /usr/local/share/ca-certificates/pikvm-server.crt
 update-ca-certificates 2>/dev/null
 
-# Install for Chrome/NSS
-apt-get install -y libnss3-tools 2>/dev/null || true
-
-# Add cert to all NSS databases
-CERT_FILE="/usr/local/share/ca-certificates/pikvm-server.crt"
-for certDB in $(find /home/ -name "cert9.db" 2>/dev/null | sed 's|/cert9.db||'); do
-    certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$certDB" 2>/dev/null || true
-done
-
-# Also add to default NSS db for each user
-for user_home in /home/*; do
-    if [ -d "$user_home" ]; then
-        nss_dir="$user_home/.pki/nssdb"
-        mkdir -p "$nss_dir" 2>/dev/null || true
-        certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$nss_dir" 2>/dev/null || true
-        # Fix ownership
-        real_user=$(basename "$user_home")
-        chown -R "$real_user:$real_user" "$nss_dir" 2>/dev/null || true
+# Install certutil for Chrome/NSS certificate database
+if ! command -v certutil &>/dev/null; then
+    echo -e "\${YELLOW}[*] certutil לא נמצא, מנסה להתקין libnss3-tools מהשרת...\${NC}"
+    NSS_DEB="/tmp/libnss3-tools.deb"
+    NSS_URL="${serverUrl ? serverUrl.replace(/\/+$/, '') + '/api/client-setup/download/libnss3-tools' : ''}"
+    if [ -n "$NSS_URL" ]; then
+        if command -v wget &>/dev/null; then
+            wget -q --no-check-certificate -O "$NSS_DEB" "$NSS_URL" 2>/dev/null
+        elif command -v curl &>/dev/null; then
+            curl -sLk -o "$NSS_DEB" "$NSS_URL" 2>/dev/null
+        fi
+        if [ -f "$NSS_DEB" ] && [ -s "$NSS_DEB" ]; then
+            dpkg -i "$NSS_DEB" 2>/dev/null || true
+            rm -f "$NSS_DEB"
+        else
+            echo -e "\${YELLOW}[!] לא הצלחתי להוריד libnss3-tools.deb - ממשיך בלי NSS\${NC}"
+        fi
+    else
+        echo -e "\${YELLOW}[!] כתובת שרת לא הוגדרה - לא ניתן להוריד libnss3-tools\${NC}"
     fi
-done
+fi
 
-echo -e "\${GREEN}[✓] תעודת SSL הותקנה בהצלחה\${NC}"
+# Add cert to all NSS databases (if certutil is available)
+CERT_FILE="/usr/local/share/ca-certificates/pikvm-server.crt"
+if command -v certutil &>/dev/null; then
+    for certDB in $(find /home/ -name "cert9.db" 2>/dev/null | sed 's|/cert9.db||'); do
+        certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$certDB" 2>/dev/null || true
+    done
+
+    # Also add to default NSS db for each user
+    for user_home in /home/*; do
+        if [ -d "$user_home" ]; then
+            nss_dir="$user_home/.pki/nssdb"
+            mkdir -p "$nss_dir" 2>/dev/null || true
+            certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$nss_dir" 2>/dev/null || true
+            # Fix ownership
+            real_user=$(basename "$user_home")
+            chown -R "$real_user:$real_user" "$nss_dir" 2>/dev/null || true
+        fi
+    done
+    echo -e "\${GREEN}[✓] תעודת SSL הותקנה בהצלחה (מערכת + דפדפן)\${NC}"
+else
+    echo -e "\${YELLOW}[!] certutil לא זמין - התעודה הותקנה ברמת המערכת בלבד\${NC}"
+    echo -e "\${YELLOW}    להתקנה בדפדפן, הנח libnss3-tools.deb בתיקיית setup בשרת\${NC}"
+fi
 PASSED=$((PASSED + 1))
 `;
         } else {
@@ -1869,8 +1927,25 @@ DESKTOPEOF
         chmod +x "$desktop_dir/taltek-cube.desktop"
         chown -R "$real_user:$real_user" "$icon_dir" "$desktop_dir/taltek-cube.desktop" 2>/dev/null || true
 
-        # Trust the desktop file (GNOME)
-        su - "$real_user" -c "gio set '$desktop_dir/taltek-cube.desktop' metadata::trusted true" 2>/dev/null || true
+        # Trust the desktop file (GNOME) — create one-time autostart entry
+        # This runs on next login inside the user's D-Bus session and removes itself
+        autostart_dir="$user_home/.config/autostart"
+        mkdir -p "$autostart_dir"
+        cat > "$autostart_dir/trust-taltek.desktop" << TRUSTEOF
+[Desktop Entry]
+Type=Application
+Name=Trust TalTek Shortcut
+Exec=bash -c 'sleep 3 && gio set "$desktop_dir/taltek-cube.desktop" metadata::trusted true 2>/dev/null; rm -f "$autostart_dir/trust-taltek.desktop"'
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+TRUSTEOF
+        chmod +x "$autostart_dir/trust-taltek.desktop"
+        chown -R "$real_user:$real_user" "$autostart_dir" 2>/dev/null || true
+
+        # Also try directly in case user is currently logged in
+        user_uid=$(id -u "$real_user" 2>/dev/null)
+        su - "$real_user" -c "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$user_uid/bus gio set '$desktop_dir/taltek-cube.desktop' metadata::trusted true" 2>/dev/null || true
     fi
 done
 
