@@ -67,6 +67,11 @@ function setMode(mode) {
         el.style.display = mode === 'ssh' ? '' : 'none';
     });
     document.querySelectorAll('.script-only').forEach(el => {
+        // Don't auto-show the post-download instructions — they're shown after download
+        if (el.id === 'scriptInstructions') {
+            if (mode !== 'script') el.style.display = 'none';
+            return;
+        }
         el.style.display = mode === 'script' ? '' : 'none';
     });
 
@@ -665,10 +670,11 @@ function copyScriptCommand() {
         cmd.style.borderColor = 'var(--secondary-color)';
         cmd.style.color = 'var(--secondary-color)';
         setTimeout(() => {
-            btn.style.borderColor = '';
-            btn.style.background = '';
-            cmd.style.borderColor = '';
-            cmd.style.color = '';
+            btn.style.borderColor = 'var(--glass-border)';
+            btn.style.background = 'var(--glass-bg)';
+            btn.style.color = 'var(--text-muted)';
+            cmd.style.borderColor = 'var(--glass-border)';
+            cmd.style.color = 'var(--primary-color)';
             icon.innerHTML = '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>';
         }, 1500);
     }
