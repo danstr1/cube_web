@@ -40,7 +40,23 @@ const STAGE_TIMEOUT_MS = 120000; // 120 second timeout per stage (Chrome install
 // ==============================
 document.addEventListener('DOMContentLoaded', () => {
     loadDefaults();
+    autoDetectClientIp();
 });
+
+// Auto-detect the browsing machine's IP and fill the field
+async function autoDetectClientIp() {
+    const input = document.getElementById('clientIp');
+    if (!input || input.value.trim()) return; // don't overwrite if already filled
+    try {
+        const response = await fetch('/api/client-ip');
+        const data = await response.json();
+        if (data.ip && data.ip !== '127.0.0.1' && data.ip !== '::1') {
+            input.value = data.ip;
+        }
+    } catch (err) {
+        // silently ignore - user can type manually
+    }
+}
 
 // Load default values from CLIENT_DEFAULTS config block in client.html
 function loadDefaults() {

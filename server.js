@@ -179,6 +179,16 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static('public'));
 
+// Return the client's IP address (the machine browsing the page)
+app.get('/api/client-ip', (req, res) => {
+    let ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.socket.remoteAddress || '';
+    // Handle IPv6-mapped IPv4 (e.g. ::ffff:10.1.1.50)
+    if (ip.startsWith('::ffff:')) ip = ip.substring(7);
+    // If multiple IPs in x-forwarded-for, take the first
+    if (ip.includes(',')) ip = ip.split(',')[0].trim();
+    res.json({ ip });
+});
+
 // Database path
 const DB_PATH = path.join(__dirname, 'data', 'database.json');
 
