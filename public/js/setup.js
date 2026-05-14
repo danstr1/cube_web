@@ -42,6 +42,11 @@ const STAGES = {
         name: 'בטל חלון קופץ בעת יציאה',
         icon: '🚫'
     },
+    changePassword: {
+        id: 'changePassword',
+        name: 'שינוי סיסמת root',
+        icon: '🔑'
+    },
     rebootPikvm: {
         id: 'rebootPikvm',
         name: 'אתחול מחדש PiKVM',
@@ -62,6 +67,7 @@ const STAGE_TIMEOUT_MS = 60000; // 60 second timeout per stage
 // ==============================
 document.addEventListener('DOMContentLoaded', () => {
     loadSshPassword();
+    loadNewSshPassword();
     setupLogoDragDrop();
 });
 
@@ -87,10 +93,46 @@ async function loadSshPassword() {
     }
 }
 
+// Load new SSH password from server
+async function loadNewSshPassword() {
+    const input = document.getElementById('newSshPassword');
+    const source = document.getElementById('newPasswordSource');
+    if (!input || !source) return;
+
+    try {
+        const response = await fetch('/api/setup/new-ssh-password');
+        const data = await response.json();
+        if (data.password) {
+            input.value = data.password;
+            source.textContent = `נטען מ-new_ssh_password`;
+            source.style.color = 'var(--secondary-color)';
+        } else {
+            source.textContent = 'לא נמצא קובץ';
+            source.style.color = 'var(--danger-color)';
+        }
+    } catch (err) {
+        source.textContent = 'שגיאת טעינה';
+        source.style.color = 'var(--danger-color)';
+    }
+}
+
 // Toggle password visibility
 function togglePasswordVisibility() {
     const input = document.getElementById('sshPassword');
     const icon = document.getElementById('eyeIcon');
+    if (input.type === 'password') {
+        input.type = 'text';
+        icon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line>';
+    } else {
+        input.type = 'password';
+        icon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>';
+    }
+}
+
+// Toggle new password visibility
+function toggleNewPasswordVisibility() {
+    const input = document.getElementById('newSshPassword');
+    const icon = document.getElementById('newEyeIcon');
     if (input.type === 'password') {
         input.type = 'text';
         icon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line>';
@@ -370,6 +412,14 @@ async function runSetup() {
         return;
     }
 
+    if (selectedStages.includes('changePassword')) {
+        const newPass = document.getElementById('newSshPassword')?.value.trim();
+        if (!newPass) {
+            alert('אנא הזן סיסמה חדשה עבור שלב שינוי סיסמת root');
+            return;
+        }
+    }
+
     // Start setup
     isRunning = true;
     document.getElementById('runBtn').disabled = true;
@@ -396,6 +446,16 @@ async function runSetup() {
         selectedStages.splice(idx, 1);
         selectedStages.push('rebootPikvm');
         addLog('⚠️ שלב אתחול מחדש הועבר לסוף', 'warning');
+    }
+    if (selectedStages.includes('changePassword') && selectedStages.length > 1) {
+        const idx = selectedStages.indexOf('changePassword');
+        selectedStages.splice(idx, 1);
+        // Insert before changeIp and reboot since it changes SSH credentials
+        const changeIpIdx = selectedStages.indexOf('changeIp');
+        const rebootIdx = selectedStages.indexOf('rebootPikvm');
+        const insertBefore = changeIpIdx !== -1 ? changeIpIdx : (rebootIdx !== -1 ? rebootIdx : selectedStages.length);
+        selectedStages.splice(insertBefore, 0, 'changePassword');
+        addLog('⚠️ שלב שינוי סיסמה הועבר לפני שינוי IP ואתחול', 'warning');
     }
     if (selectedStages.includes('changeIp') && selectedStages.length > 1) {
         const idx = selectedStages.indexOf('changeIp');
@@ -442,6 +502,15 @@ async function runSetup() {
                 addLog(`✅ ${stage.name} הושלם בהצלחה`, 'success');
                 if (result.message) addLog(`   ${result.message}`, 'info');
                 completedCount++;
+
+                // After password change, update SSH password field for subsequent stages
+                if (stageId === 'changePassword') {
+                    const newPass = document.getElementById('newSshPassword')?.value.trim();
+                    if (newPass) {
+                        document.getElementById('sshPassword').value = newPass;
+                        addLog('🔑 סיסמת SSH עודכנה לשלבים הבאים', 'info');
+                    }
+                }
             } else {
                 updateStageProgress(stageId, 'failed', result.message || 'נכשל');
                 addLog(`❌ ${stage.name} נכשל: ${result.message || 'שגיאה לא ידועה'}`, 'error');
@@ -509,6 +578,12 @@ async function executeStage(stageId, currentIp, newIp, allStages) {
     // If this is the logo stage and user uploaded a file, send it
     if (stageId === 'replaceLogo' && logoSource === 'upload' && uploadedLogoBase64) {
         body.uploadedLogo = uploadedLogoBase64;
+    }
+
+    // If this is the changePassword stage, send the new password
+    if (stageId === 'changePassword') {
+        const newPasswordInput = document.getElementById('newSshPassword');
+        body.newPassword = newPasswordInput ? newPasswordInput.value.trim() : '';
     }
 
     // If changeIp + rebootPikvm are both selected, skip network restart (reboot will apply it)

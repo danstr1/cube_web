@@ -4,7 +4,7 @@
 const STAGES = {
     installCert: {
         id: 'installCert',
-        name: 'התקנת תעודת SSL',
+        name: 'התקנת תעודת Root CA ב-Chrome',
         icon: '🔒'
     },
     configureNtp: {

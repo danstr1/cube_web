@@ -789,6 +789,17 @@ app.get('/api/setup/ssh-password', (req, res) => {
     res.json({ password });
 });
 
+// Get new SSH password from file
+app.get('/api/setup/new-ssh-password', (req, res) => {
+    try {
+        const password = fs.readFileSync(path.join(SETUP_DIR, 'new_ssh_password'), 'utf8').trim();
+        res.json({ password });
+    } catch (err) {
+        console.error('Error reading new_ssh_password file:', err.message);
+        res.json({ password: '' });
+    }
+});
+
 // Test connection endpoint
 app.post('/api/setup/test-connection', async (req, res) => {
     const { ip, password } = req.body;
@@ -847,6 +858,9 @@ app.post('/api/setup/run-stage', async (req, res) => {
                 break;
             case 'disableClosePopup':
                 result = await stageDisableClosePopup(conn);
+                break;
+            case 'changePassword':
+                result = await stageChangePassword(conn, req.body.newPassword);
                 break;
             case 'rebootPikvm':
                 result = await stageRebootPikvm(conn);
@@ -1094,6 +1108,22 @@ async function stageRebootPikvm(conn) {
     return { success: true, message: 'PiKVM בתהליך אתחול מחדש' };
 }
 
+// Stage: Change root password
+async function stageChangePassword(conn, newPassword) {
+    if (!newPassword) return { success: false, message: 'New password is required' };
+
+    // Use chpasswd to change the root password
+    const escapedPassword = newPassword.replace(/'/g, "'\\''");
+    const cmd = `echo 'root:${escapedPassword}' | chpasswd`;
+
+    const result = await sshExec(conn, cmd);
+    if (result.code !== 0) {
+        return { success: false, message: `שינוי סיסמה נכשל: ${result.stderr}` };
+    }
+
+    return { success: true, message: 'סיסמת root שונתה בהצלחה' };
+}
+
 // Stage: Configure NTP
 async function stageConfigureNtp(conn) {
     // Configure NTP server in timesyncd
@@ -1257,7 +1287,7 @@ app.post('/api/client-setup/run-stage', async (req, res) => {
         let result;
         switch (stage) {
             case 'installCert':
-                result = await clientStageInstallCert(conn, password);
+                result = await clientStageInstallCert(conn, username);
                 break;
             case 'configureNtp':
                 result = await clientStageConfigureNtp(conn, password, ntpServer);
@@ -1284,139 +1314,92 @@ app.post('/api/client-setup/run-stage', async (req, res) => {
     }
 });
 
-// Client Stage: Install SSL Certificate
-async function clientStageInstallCert(conn, sudoPassword) {
-    const certPath = path.join(SETUP_DIR, 'server.crt');
+// Client Stage: Install Root CA Certificate into Chrome NSS database
+// This mimics: Chrome Settings → Privacy → Manage certificates → Authorities → Import
+async function clientStageInstallCert(conn, username) {
+    const certPath = path.join(SETUP_DIR, 'myRootCA.crt');
 
     // Check if cert file exists on server
     if (!fs.existsSync(certPath)) {
-        return { success: false, message: 'קובץ server.crt לא נמצא בתיקיית setup בשרת' };
+        return { success: false, message: 'קובץ myRootCA.crt לא נמצא בתיקיית public/setup בשרת' };
     }
 
     // Read the certificate and validate it looks like a real PEM certificate
     const certContent = fs.readFileSync(certPath);
     const certText = certContent.toString('utf8');
-    if (certText.includes('REPLACE_WITH_YOUR_CERTIFICATE') || certText.length < 200) {
-        return { success: false, message: 'קובץ server.crt מכיל תוכן placeholder - יש ליצור תעודה אמיתית (הרץ את generate_cert.ps1)' };
-    }
     if (!certText.includes('-----BEGIN CERTIFICATE-----') || !certText.includes('-----END CERTIFICATE-----')) {
-        return { success: false, message: 'קובץ server.crt אינו תעודת PEM תקינה' };
+        return { success: false, message: 'קובץ myRootCA.crt אינו תעודת PEM תקינה' };
     }
 
-    // Upload to temp location
-    await sshUploadBuffer(conn, certContent, '/tmp/pikvm-server.crt');
+    // Upload cert to temp location on client
+    await sshUploadBuffer(conn, certContent, '/tmp/myRootCA.crt');
 
-    // Escape single quotes in password to avoid command injection / breakage
-    const escapedPassword = sudoPassword.replace(/'/g, "'\\''");
-
-    // Ensure target directory exists, copy cert, and update trust store
-    const mkdirResult = await sshExec(conn, `echo '${escapedPassword}' | sudo -S mkdir -p /usr/local/share/ca-certificates 2>&1`, 15000);
-    if (mkdirResult.code !== 0) {
-        const output = (mkdirResult.stderr || mkdirResult.stdout || '').toLowerCase();
-        if (output.includes('incorrect password') || output.includes('not in the sudoers')) {
-            return { success: false, message: `שגיאת הרשאות sudo: ${mkdirResult.stderr || mkdirResult.stdout}` };
-        }
-        return { success: false, message: `לא ניתן ליצור תיקיית ca-certificates: ${mkdirResult.stderr || mkdirResult.stdout}` };
-    }
-
-    const cpResult = await sshExec(conn, `echo '${escapedPassword}' | sudo -S cp /tmp/pikvm-server.crt /usr/local/share/ca-certificates/pikvm-server.crt 2>&1`, 15000);
-    if (cpResult.code !== 0) {
-        await sshExec(conn, 'rm -f /tmp/pikvm-server.crt', 5000).catch(() => {});
-        const output = (cpResult.stderr || cpResult.stdout || '').toLowerCase();
-        if (output.includes('incorrect password') || output.includes('not in the sudoers')) {
-            return { success: false, message: `שגיאת הרשאות sudo: ${cpResult.stderr || cpResult.stdout}` };
-        }
-        return { success: false, message: `שגיאה בהעתקת התעודה: ${cpResult.stderr || cpResult.stdout}` };
-    }
-
-    const updateResult = await sshExec(conn, `echo '${escapedPassword}' | sudo -S update-ca-certificates 2>&1`, 30000);
-    // update-ca-certificates may return warnings on stderr even on success — check if it actually added certs
-    if (updateResult.code !== 0) {
-        const output = (updateResult.stderr || updateResult.stdout || '').toLowerCase();
-        if (output.includes('incorrect password') || output.includes('not in the sudoers')) {
-            return { success: false, message: `שגיאת הרשאות sudo: ${updateResult.stderr || updateResult.stdout}` };
-        }
-        // Non-zero exit but not a sudo issue — log but continue (some systems return 1 on warnings)
-        console.warn('update-ca-certificates returned non-zero:', updateResult.code, updateResult.stdout, updateResult.stderr);
-    }
-
-    // Clean up temp file
-    await sshExec(conn, 'rm -f /tmp/pikvm-server.crt', 5000).catch(() => {});
-
-    // Verify the cert was installed in the system trust store
-    const verifyResult = await sshExec(conn, `ls -la /usr/local/share/ca-certificates/pikvm-server.crt 2>&1 && echo '${escapedPassword}' | sudo -S test -f /etc/ssl/certs/pikvm-server.pem 2>/dev/null && echo "CERT_LINKED" || echo "CERT_NOT_LINKED"`, 10000);
-    const certInstalled = verifyResult.stdout.includes('pikvm-server.crt');
-    if (!certInstalled) {
-        return { success: false, message: 'התעודה הועתקה אך לא נמצאה בתיקיית ca-certificates — ייתכן שהעתקה נכשלה' };
-    }
-
-    // Also install for NSS (Chrome/Firefox use NSS database)
-    // Install certutil from local .deb if available (no internet)
-    const nssDebPath = path.join(SETUP_DIR, 'libnss3-tools.deb');
-    if (fs.existsSync(nssDebPath)) {
-        // Check if certutil is already available
-        const certutilCheck = await sshExec(conn, 'which certutil 2>/dev/null', 5000).catch(() => ({ stdout: '' }));
-        if (!certutilCheck.stdout.includes('certutil')) {
-            // Upload and install libnss3-tools from local .deb
+    // Check if certutil is available
+    const certutilCheck = await sshExec(conn, 'which certutil 2>/dev/null', 5000).catch(() => ({ stdout: '' }));
+    if (!certutilCheck.stdout.includes('certutil')) {
+        // Try to install from local .deb if available
+        const nssDebPath = path.join(SETUP_DIR, 'libnss3-tools.deb');
+        if (fs.existsSync(nssDebPath)) {
             const nssDebContent = fs.readFileSync(nssDebPath);
             await sshUploadBuffer(conn, nssDebContent, '/tmp/libnss3-tools.deb', 30000);
-            await sshExec(conn, `echo '${escapedPassword}' | sudo -S dpkg -i /tmp/libnss3-tools.deb 2>&1 || true`, 30000);
+            await sshExec(conn, 'sudo dpkg -i /tmp/libnss3-tools.deb 2>&1 || true', 30000);
             await sshExec(conn, 'rm -f /tmp/libnss3-tools.deb', 5000);
         }
+
+        // Verify it's now available
+        const recheck = await sshExec(conn, 'which certutil 2>/dev/null', 5000).catch(() => ({ stdout: '' }));
+        if (!recheck.stdout.includes('certutil')) {
+            await sshExec(conn, 'rm -f /tmp/myRootCA.crt', 5000).catch(() => {});
+            return { success: false, message: 'certutil (libnss3-tools) לא מותקן — נדרש להתקנת תעודה בדפדפן Chrome. הנח libnss3-tools.deb בתיקיית setup.' };
+        }
     }
 
-    // Add cert to Chrome/Chromium NSS database for ALL desktop users
-    // Write a helper script to /tmp, then run it with sudo to avoid quoting issues
+    // Build a script that imports the Root CA into Chrome's NSS database for the SSH user
+    // This is the equivalent of: Chrome → Settings → Privacy → Manage Certificates → Authorities → Import
+    const homeDir = `/home/${username}`;
     const nssScript = [
         '#!/bin/bash',
-        'CERT_FILE="/usr/local/share/ca-certificates/pikvm-server.crt"',
-        'if ! [ -f "$CERT_FILE" ]; then',
-        '    echo "ERROR: Certificate file not found at $CERT_FILE"',
-        '    exit 1',
-        'fi',
-        'if command -v certutil &>/dev/null; then',
-        '    ADDED=0',
-        '    for user_home in /home/*; do',
-        '        if [ -d "$user_home" ]; then',
-        '            real_user=$(basename "$user_home")',
-        '            for certDB in $(find "$user_home" -name "cert9.db" 2>/dev/null | sed \'s|/cert9.db||\'); do',
-        '                certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$certDB" 2>/dev/null && ADDED=$((ADDED+1))',
-        '            done',
-        '            nss_dir="$user_home/.pki/nssdb"',
-        '            mkdir -p "$nss_dir" 2>/dev/null || true',
-        '            certutil -d sql:"$nss_dir" -N --empty-password 2>/dev/null || true',
-        '            certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$nss_dir" 2>/dev/null && ADDED=$((ADDED+1))',
-        '            chown -R "$real_user:$real_user" "$nss_dir" 2>/dev/null || true',
-        '        fi',
-        '    done',
-        '    echo "NSS_ADDED=$ADDED"',
-        'else',
-        '    echo "NO_CERTUTIL"',
-        'fi',
+        'CERT_FILE="/tmp/myRootCA.crt"',
+        `HOME_DIR="${homeDir}"`,
+        'ADDED=0',
+        '',
+        '# Import into existing Chrome/Chromium NSS databases',
+        'for certDB in $(find "$HOME_DIR" -name "cert9.db" 2>/dev/null | sed \'s|/cert9.db||\'); do',
+        '    certutil -A -n "MyRootCA" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$certDB" 2>/dev/null && ADDED=$((ADDED+1))',
+        'done',
+        '',
+        '# Also ensure the default NSS db exists at ~/.pki/nssdb and import there',
+        'nss_dir="$HOME_DIR/.pki/nssdb"',
+        'mkdir -p "$nss_dir" 2>/dev/null || true',
+        'certutil -d sql:"$nss_dir" -N --empty-password 2>/dev/null || true',
+        'certutil -A -n "MyRootCA" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$nss_dir" 2>/dev/null && ADDED=$((ADDED+1))',
+        `chown -R ${username}:${username} "$nss_dir" 2>/dev/null || true`,
+        '',
+        'echo "NSS_ADDED=$ADDED"',
     ].join('\n');
 
-    // Upload via sshUploadBuffer to avoid heredoc/quoting issues entirely
     await sshUploadBuffer(conn, Buffer.from(nssScript, 'utf8'), '/tmp/nss_cert_install.sh', 5000);
-    await sshExec(conn, `chmod +x /tmp/nss_cert_install.sh`, 5000).catch(() => {});
-    const nssResult = await sshExec(conn, `echo '${escapedPassword}' | sudo -S bash /tmp/nss_cert_install.sh 2>&1`, 30000).catch(() => ({ stdout: '' }));
-    await sshExec(conn, `rm -f /tmp/nss_cert_install.sh`, 5000).catch(() => {});
+    await sshExec(conn, 'chmod +x /tmp/nss_cert_install.sh', 5000).catch(() => {});
+    const nssResult = await sshExec(conn, 'bash /tmp/nss_cert_install.sh 2>&1', 30000).catch(() => ({ stdout: '' }));
+
+    // Verify the import
+    const verifyResult = await sshExec(conn, `certutil -L -d sql:${homeDir}/.pki/nssdb 2>/dev/null | grep -i MyRootCA`, 10000).catch(() => ({ stdout: '' }));
+
+    // Clean up
+    await sshExec(conn, 'rm -f /tmp/myRootCA.crt /tmp/nss_cert_install.sh', 5000).catch(() => {});
 
     // Build result message
-    const certLinked = verifyResult.stdout.includes('CERT_LINKED');
-    let message = 'תעודת SSL הותקנה בהצלחה במערכת';
-    if (certLinked) {
-        message += ' (מקושרת ב-trust store)';
-    }
-    if (nssResult.stdout && nssResult.stdout.includes('NSS_ADDED=')) {
-        const nssAdded = nssResult.stdout.match(/NSS_ADDED=(\d+)/);
-        if (nssAdded && parseInt(nssAdded[1]) > 0) {
-            message += ` + ${nssAdded[1]} מסדי NSS בדפדפן`;
-        }
-    } else if (nssResult.stdout && nssResult.stdout.includes('NO_CERTUTIL')) {
-        message += ' (certutil לא זמין — התעודה הותקנה ברמת המערכת בלבד)';
+    let added = 0;
+    if (nssResult.stdout) {
+        const match = nssResult.stdout.match(/NSS_ADDED=(\d+)/);
+        if (match) added = parseInt(match[1]);
     }
 
-    return { success: true, message };
+    if (added > 0 || verifyResult.stdout.includes('MyRootCA')) {
+        return { success: true, message: `תעודת Root CA הותקנה בהצלחה ב-Chrome (${added} מסדי NSS עודכנו)` };
+    } else {
+        return { success: false, message: 'לא הצלחתי לייבא את התעודה למסד NSS של Chrome — ודא שקובץ myRootCA.crt תקין' };
+    }
 }
 
 // Client Stage: Configure NTP
@@ -1701,13 +1684,13 @@ print('Updated')
 // Client Setup - Script Mode (generate downloadable bash script)
 // ============================================================
 
-// Serve certificate for script download
+// Serve Root CA certificate for script download
 app.get('/api/client-setup/download/cert', (req, res) => {
-    const certPath = path.join(SETUP_DIR, 'server.crt');
+    const certPath = path.join(SETUP_DIR, 'myRootCA.crt');
     if (!fs.existsSync(certPath)) {
-        return res.status(404).json({ message: 'server.crt not found in setup folder' });
+        return res.status(404).json({ message: 'myRootCA.crt not found in setup folder' });
     }
-    res.download(certPath, 'server.crt');
+    res.download(certPath, 'myRootCA.crt');
 });
 
 // Serve libnss3-tools deb for script download
@@ -1736,18 +1719,15 @@ app.post('/api/client-setup/generate-script', (req, res) => {
         return res.status(400).json({ message: 'No stages selected' });
     }
 
-    // Read certificate for embedding in script
+    // Read Root CA certificate for embedding in script
     let certBase64 = '';
     let certValid = false;
     if (stages.includes('installCert')) {
-        const certPath = path.join(SETUP_DIR, 'server.crt');
+        const certPath = path.join(SETUP_DIR, 'myRootCA.crt');
         if (fs.existsSync(certPath)) {
             const certText = fs.readFileSync(certPath, 'utf8');
-            if (certText.includes('REPLACE_WITH_YOUR_CERTIFICATE') || certText.length < 200) {
-                return res.status(400).json({ message: 'קובץ server.crt מכיל תוכן placeholder — יש ליצור תעודה אמיתית (הרץ את generate_cert.ps1)' });
-            }
             if (!certText.includes('-----BEGIN CERTIFICATE-----') || !certText.includes('-----END CERTIFICATE-----')) {
-                return res.status(400).json({ message: 'קובץ server.crt אינו תעודת PEM תקינה' });
+                return res.status(400).json({ message: 'קובץ myRootCA.crt אינו תעודת PEM תקינה' });
             }
             certBase64 = Buffer.from(certText).toString('base64');
             certValid = true;
@@ -1803,91 +1783,73 @@ echo -e "\${BLUE}[*] מתקין תעודת SSL...\${NC}"
 `;
         if (certBase64 && certValid) {
             script += `CERT_B64="${certBase64}"
-echo "$CERT_B64" | base64 -d > /tmp/pikvm-server.crt
+echo "$CERT_B64" | base64 -d > /tmp/myRootCA.crt
 
 # Verify decoded certificate is valid PEM
-if ! grep -q "BEGIN CERTIFICATE" /tmp/pikvm-server.crt 2>/dev/null; then
+if ! grep -q "BEGIN CERTIFICATE" /tmp/myRootCA.crt 2>/dev/null; then
     echo -e "\${RED}[✗] התעודה שהופקה אינה תקינה (לא PEM)\${NC}"
-    rm -f /tmp/pikvm-server.crt
+    rm -f /tmp/myRootCA.crt
     FAILED=$((FAILED + 1))
 else
-    # Ensure target directory exists
-    mkdir -p /usr/local/share/ca-certificates 2>/dev/null
-
-    cp /tmp/pikvm-server.crt /usr/local/share/ca-certificates/pikvm-server.crt
-    if [ $? -ne 0 ]; then
-        echo -e "\${RED}[✗] שגיאה בהעתקת התעודה ל-ca-certificates\${NC}"
-        rm -f /tmp/pikvm-server.crt
-        FAILED=$((FAILED + 1))
-    else
-        rm -f /tmp/pikvm-server.crt
-        update-ca-certificates 2>/dev/null
-        if [ $? -ne 0 ]; then
-            echo -e "\${YELLOW}[!] update-ca-certificates החזיר שגיאה — התעודה הועתקה אך ייתכן שלא הותקנה כראוי\${NC}"
-        fi
-
-        # Verify installation
-        if [ -f /usr/local/share/ca-certificates/pikvm-server.crt ]; then
-            echo -e "\${GREEN}[✓] תעודת SSL הותקנה ברמת המערכת\${NC}"
-        else
-            echo -e "\${RED}[✗] התעודה לא נמצאה לאחר ההתקנה\${NC}"
-            FAILED=$((FAILED + 1))
-        fi
-
-        # Install certutil for Chrome/NSS certificate database
-        if ! command -v certutil &>/dev/null; then
-            echo -e "\${YELLOW}[*] certutil לא נמצא, מנסה להתקין libnss3-tools מהשרת...\${NC}"
-            NSS_DEB="/tmp/libnss3-tools.deb"
-            NSS_URL="${serverUrl ? serverUrl.replace(/\/+$/, '') + '/api/client-setup/download/libnss3-tools' : ''}"
-            if [ -n "$NSS_URL" ]; then
-                if command -v wget &>/dev/null; then
-                    wget -q --no-check-certificate -O "$NSS_DEB" "$NSS_URL" 2>/dev/null
-                elif command -v curl &>/dev/null; then
-                    curl -sLk -o "$NSS_DEB" "$NSS_URL" 2>/dev/null
-                fi
-                if [ -f "$NSS_DEB" ] && [ -s "$NSS_DEB" ]; then
-                    dpkg -i "$NSS_DEB" 2>/dev/null || true
-                    rm -f "$NSS_DEB"
-                else
-                    echo -e "\${YELLOW}[!] לא הצלחתי להוריד libnss3-tools.deb - ממשיך בלי NSS\${NC}"
-                fi
+    # Install certutil (libnss3-tools) if not available
+    if ! command -v certutil &>/dev/null; then
+        echo -e "\${YELLOW}[*] certutil לא נמצא, מנסה להתקין libnss3-tools מהשרת...\${NC}"
+        NSS_DEB="/tmp/libnss3-tools.deb"
+        NSS_URL="${serverUrl ? serverUrl.replace(/\/+$/, '') + '/api/client-setup/download/libnss3-tools' : ''}"
+        if [ -n "$NSS_URL" ]; then
+            if command -v wget &>/dev/null; then
+                wget -q --no-check-certificate -O "$NSS_DEB" "$NSS_URL" 2>/dev/null
+            elif command -v curl &>/dev/null; then
+                curl -sLk -o "$NSS_DEB" "$NSS_URL" 2>/dev/null
+            fi
+            if [ -f "$NSS_DEB" ] && [ -s "$NSS_DEB" ]; then
+                dpkg -i "$NSS_DEB" 2>/dev/null || true
+                rm -f "$NSS_DEB"
             else
-                echo -e "\${YELLOW}[!] כתובת שרת לא הוגדרה - לא ניתן להוריד libnss3-tools\${NC}"
+                echo -e "\${YELLOW}[!] לא הצלחתי להוריד libnss3-tools.deb\${NC}"
             fi
         fi
-
-        # Add cert to all NSS databases (if certutil is available)
-        CERT_FILE="/usr/local/share/ca-certificates/pikvm-server.crt"
-        if command -v certutil &>/dev/null; then
-            NSS_ADDED=0
-            for certDB in $(find /home/ -name "cert9.db" 2>/dev/null | sed 's|/cert9.db||'); do
-                certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$certDB" 2>/dev/null && NSS_ADDED=$((NSS_ADDED+1))
-            done
-
-            # Also add to default NSS db for each user
-            for user_home in /home/*; do
-                if [ -d "$user_home" ]; then
-                    nss_dir="$user_home/.pki/nssdb"
-                    mkdir -p "$nss_dir" 2>/dev/null || true
-                    # Initialize NSS database if it doesn't exist
-                    certutil -d sql:"$nss_dir" -N --empty-password 2>/dev/null || true
-                    certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$nss_dir" 2>/dev/null && NSS_ADDED=$((NSS_ADDED+1))
-                    # Fix ownership
-                    real_user=$(basename "$user_home")
-                    chown -R "$real_user:$real_user" "$nss_dir" 2>/dev/null || true
-                fi
-            done
-            echo -e "\${GREEN}[✓] תעודה הותקנה ב-$NSS_ADDED מסדי NSS בדפדפן\${NC}"
-        else
-            echo -e "\${YELLOW}[!] certutil לא זמין - התעודה הותקנה ברמת המערכת בלבד\${NC}"
-            echo -e "\${YELLOW}    להתקנה בדפדפן, הנח libnss3-tools.deb בתיקיית setup בשרת\${NC}"
-        fi
-        PASSED=$((PASSED + 1))
     fi
+
+    if ! command -v certutil &>/dev/null; then
+        echo -e "\${RED}[✗] certutil לא זמין — לא ניתן להתקין תעודה בדפדפן Chrome\${NC}"
+        rm -f /tmp/myRootCA.crt
+        FAILED=$((FAILED + 1))
+    else
+        # Import Root CA into Chrome NSS database for all users
+        # This is equivalent to: Chrome → Settings → Privacy → Manage Certificates → Authorities → Import
+        NSS_ADDED=0
+        for user_home in /home/*; do
+            if [ -d "$user_home" ]; then
+                real_user=$(basename "$user_home")
+
+                # Import into any existing cert9.db locations
+                for certDB in $(find "$user_home" -name "cert9.db" 2>/dev/null | sed 's|/cert9.db||'); do
+                    certutil -A -n "MyRootCA" -t "CT,C,C" -i /tmp/myRootCA.crt -d sql:"$certDB" 2>/dev/null && NSS_ADDED=$((NSS_ADDED+1))
+                done
+
+                # Ensure default NSS db exists and import there
+                nss_dir="$user_home/.pki/nssdb"
+                mkdir -p "$nss_dir" 2>/dev/null || true
+                certutil -d sql:"$nss_dir" -N --empty-password 2>/dev/null || true
+                certutil -A -n "MyRootCA" -t "CT,C,C" -i /tmp/myRootCA.crt -d sql:"$nss_dir" 2>/dev/null && NSS_ADDED=$((NSS_ADDED+1))
+                chown -R "$real_user:$real_user" "$nss_dir" 2>/dev/null || true
+            fi
+        done
+
+        if [ $NSS_ADDED -gt 0 ]; then
+            echo -e "\${GREEN}[✓] תעודת Root CA הותקנה בהצלחה ב-Chrome ($NSS_ADDED מסדי NSS)\${NC}"
+            PASSED=$((PASSED + 1))
+        else
+            echo -e "\${RED}[✗] לא הצלחתי לייבא את התעודה למסד NSS של Chrome\${NC}"
+            FAILED=$((FAILED + 1))
+        fi
+    fi
+    rm -f /tmp/myRootCA.crt
 fi
 `;
         } else {
-            script += `echo -e "\${RED}[✗] תעודת SSL לא נמצאה בשרת בעת יצירת הסקריפט — ודא שקובץ server.crt תקין בתיקיית setup\${NC}"
+            script += `echo -e "\${RED}[✗] תעודת Root CA לא נמצאה בשרת — ודא שקובץ myRootCA.crt נמצא בתיקיית public/setup\${NC}"
 FAILED=$((FAILED + 1))
 `;
         }

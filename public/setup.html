@@ -876,13 +876,29 @@
 
                 <div class="password-group">
                     <div class="password-label">
-                        <label>🔑 סיסמת SSH (root)</label>
+                        <label>🔑 סיסמת SSH (נוכחית)</label>
                         <span class="password-source" id="passwordSource">טוען...</span>
                     </div>
                     <div class="password-row">
                         <input type="password" id="sshPassword" placeholder="טוען סיסמה..." dir="ltr" autocomplete="off">
                         <button class="password-toggle" onclick="togglePasswordVisibility()" title="הצג/הסתר סיסמה">
                             <svg id="eyeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="password-group">
+                    <div class="password-label">
+                        <label>🔐 סיסמת root חדשה</label>
+                        <span class="password-source" id="newPasswordSource">טוען...</span>
+                    </div>
+                    <div class="password-row">
+                        <input type="password" id="newSshPassword" placeholder="טוען סיסמה חדשה..." dir="ltr" autocomplete="off">
+                        <button class="password-toggle" onclick="toggleNewPasswordVisibility()" title="הצג/הסתר סיסמה">
+                            <svg id="newEyeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                                 <circle cx="12" cy="12" r="3"></circle>
                             </svg>
@@ -1027,7 +1043,19 @@
                         </div>
                     </div>
 
-                    <!-- Stage 9: Reboot PiKVM -->
+                    <!-- Stage 9: Change Root Password -->
+                    <div class="stage-item checked" data-stage="changePassword" onclick="toggleStage(this)">
+                        <div class="stage-checkbox">
+                            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                        <div class="stage-icon">🔑</div>
+                        <div class="stage-content">
+                            <div class="stage-title">שינוי סיסמת root</div>
+                            <div class="stage-desc">שינוי סיסמת משתמש root לסיסמה מקובץ new_ssh_password</div>
+                        </div>
+                    </div>
+
+                    <!-- Stage 10: Reboot PiKVM -->
                     <div class="stage-item checked" data-stage="rebootPikvm" onclick="toggleStage(this)">
                         <div class="stage-checkbox">
                             <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
