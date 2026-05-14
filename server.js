@@ -1331,31 +1331,34 @@ async function clientStageInstallCert(conn, sudoPassword) {
         }
     }
 
-    // Re-upload cert for NSS processing
-    const nssCommands = [
-        `echo '${sudoPassword}' | sudo -S cp /usr/local/share/ca-certificates/pikvm-server.crt /tmp/pikvm-server.crt 2>&1`,
-    ];
+    // Add cert to Chrome/Chromium NSS database for ALL desktop users
+    // Write a helper script to /tmp, then run it with sudo to avoid quoting issues
+    const nssScript = [
+        '#!/bin/bash',
+        'CERT_FILE="/usr/local/share/ca-certificates/pikvm-server.crt"',
+        'if command -v certutil &>/dev/null; then',
+        '    for user_home in /home/*; do',
+        '        if [ -d "$user_home" ]; then',
+        '            real_user=$(basename "$user_home")',
+        '            for certDB in $(find "$user_home" -name "cert9.db" 2>/dev/null | sed \'s|/cert9.db||\'); do',
+        '                certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$certDB" 2>/dev/null || true',
+        '            done',
+        '            nss_dir="$user_home/.pki/nssdb"',
+        '            mkdir -p "$nss_dir" 2>/dev/null || true',
+        '            certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$nss_dir" 2>/dev/null || true',
+        '            chown -R "$real_user:$real_user" "$nss_dir" 2>/dev/null || true',
+        '        fi',
+        '    done',
+        'fi',
+    ].join('\n');
 
-    for (const cmd of nssCommands) {
-        await sshExec(conn, cmd, 60000).catch(() => {});
-    }
+    // Upload via sshUploadBuffer to avoid heredoc/quoting issues entirely
+    await sshUploadBuffer(conn, Buffer.from(nssScript, 'utf8'), '/tmp/nss_cert_install.sh', 5000);
+    await sshExec(conn, `chmod +x /tmp/nss_cert_install.sh`, 5000).catch(() => {});
+    await sshExec(conn, `echo '${sudoPassword}' | sudo -S bash /tmp/nss_cert_install.sh 2>&1`, 30000).catch(() => {});
+    await sshExec(conn, `rm -f /tmp/nss_cert_install.sh`, 5000).catch(() => {});
 
-    // Add to all NSS databases for the user (Chrome uses these)
-    const addNssCmd = `
-        for certDB in $(find ~/ -name "cert9.db" 2>/dev/null | sed 's|/cert9.db||'); do
-            certutil -A -n "PiKVM Server" -t "CT,C,C" -i /tmp/pikvm-server.crt -d sql:$certDB 2>/dev/null || true
-        done
-        # Also create default NSS db if Chrome profile exists
-        for profile in ~/.pki/nssdb; do
-            mkdir -p $profile 2>/dev/null
-            certutil -A -n "PiKVM Server" -t "CT,C,C" -i /tmp/pikvm-server.crt -d sql:$profile 2>/dev/null || true
-        done
-        rm -f /tmp/pikvm-server.crt
-    `;
-
-    await sshExec(conn, addNssCmd, 30000).catch(() => {});
-
-    return { success: true, message: 'תעודת SSL הותקנה בהצלחה - הן במערכת והן בדפדפן' };
+    return { success: true, message: 'תעודת SSL הותקנה בהצלחה - הן במערכת והן בדפדפן (NSS)' };
 }
 
 // Client Stage: Configure NTP

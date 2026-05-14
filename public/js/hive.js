@@ -441,9 +441,13 @@ async function loadBoxes() {
         apiGet('/api/hives')
     ]);
     
-    // Update hive select for new box
+    // Update hive select for new box (preserve previous selection)
     const hiveSelect = document.getElementById('newBoxHive');
+    const previousHiveSelection = hiveSelect.value;
     hiveSelect.innerHTML = hives.map(h => `<option value="${h.id}">${h.name}</option>`).join('');
+    if (previousHiveSelection && hives.some(h => String(h.id) === previousHiveSelection)) {
+        hiveSelect.value = previousHiveSelection;
+    }
     
     // Update hive filter select
     const filterSelect = document.getElementById('filterBoxHive');
