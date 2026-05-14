@@ -1293,27 +1293,61 @@ async function clientStageInstallCert(conn, sudoPassword) {
         return { success: false, message: 'קובץ server.crt לא נמצא בתיקיית setup בשרת' };
     }
 
-    // Read the certificate
+    // Read the certificate and validate it looks like a real PEM certificate
     const certContent = fs.readFileSync(certPath);
+    const certText = certContent.toString('utf8');
+    if (certText.includes('REPLACE_WITH_YOUR_CERTIFICATE') || certText.length < 200) {
+        return { success: false, message: 'קובץ server.crt מכיל תוכן placeholder - יש ליצור תעודה אמיתית (הרץ את generate_cert.ps1)' };
+    }
+    if (!certText.includes('-----BEGIN CERTIFICATE-----') || !certText.includes('-----END CERTIFICATE-----')) {
+        return { success: false, message: 'קובץ server.crt אינו תעודת PEM תקינה' };
+    }
 
     // Upload to temp location
     await sshUploadBuffer(conn, certContent, '/tmp/pikvm-server.crt');
 
-    // Copy to system trusted certificates directory and update
-    const commands = [
-        `echo '${sudoPassword}' | sudo -S cp /tmp/pikvm-server.crt /usr/local/share/ca-certificates/pikvm-server.crt 2>&1`,
-        `echo '${sudoPassword}' | sudo -S update-ca-certificates 2>&1`,
-        'rm -f /tmp/pikvm-server.crt'
-    ];
+    // Escape single quotes in password to avoid command injection / breakage
+    const escapedPassword = sudoPassword.replace(/'/g, "'\\''");
 
-    for (const cmd of commands) {
-        const result = await sshExec(conn, cmd, 30000);
-        if (result.code !== 0 && !cmd.includes('rm -f')) {
-            // Check if it's just a sudo password prompt issue
-            if (result.stderr.includes('incorrect password') || result.stderr.includes('not in the sudoers')) {
-                return { success: false, message: `שגיאת הרשאות sudo: ${result.stderr}` };
-            }
+    // Ensure target directory exists, copy cert, and update trust store
+    const mkdirResult = await sshExec(conn, `echo '${escapedPassword}' | sudo -S mkdir -p /usr/local/share/ca-certificates 2>&1`, 15000);
+    if (mkdirResult.code !== 0) {
+        const output = (mkdirResult.stderr || mkdirResult.stdout || '').toLowerCase();
+        if (output.includes('incorrect password') || output.includes('not in the sudoers')) {
+            return { success: false, message: `שגיאת הרשאות sudo: ${mkdirResult.stderr || mkdirResult.stdout}` };
         }
+        return { success: false, message: `לא ניתן ליצור תיקיית ca-certificates: ${mkdirResult.stderr || mkdirResult.stdout}` };
+    }
+
+    const cpResult = await sshExec(conn, `echo '${escapedPassword}' | sudo -S cp /tmp/pikvm-server.crt /usr/local/share/ca-certificates/pikvm-server.crt 2>&1`, 15000);
+    if (cpResult.code !== 0) {
+        await sshExec(conn, 'rm -f /tmp/pikvm-server.crt', 5000).catch(() => {});
+        const output = (cpResult.stderr || cpResult.stdout || '').toLowerCase();
+        if (output.includes('incorrect password') || output.includes('not in the sudoers')) {
+            return { success: false, message: `שגיאת הרשאות sudo: ${cpResult.stderr || cpResult.stdout}` };
+        }
+        return { success: false, message: `שגיאה בהעתקת התעודה: ${cpResult.stderr || cpResult.stdout}` };
+    }
+
+    const updateResult = await sshExec(conn, `echo '${escapedPassword}' | sudo -S update-ca-certificates 2>&1`, 30000);
+    // update-ca-certificates may return warnings on stderr even on success — check if it actually added certs
+    if (updateResult.code !== 0) {
+        const output = (updateResult.stderr || updateResult.stdout || '').toLowerCase();
+        if (output.includes('incorrect password') || output.includes('not in the sudoers')) {
+            return { success: false, message: `שגיאת הרשאות sudo: ${updateResult.stderr || updateResult.stdout}` };
+        }
+        // Non-zero exit but not a sudo issue — log but continue (some systems return 1 on warnings)
+        console.warn('update-ca-certificates returned non-zero:', updateResult.code, updateResult.stdout, updateResult.stderr);
+    }
+
+    // Clean up temp file
+    await sshExec(conn, 'rm -f /tmp/pikvm-server.crt', 5000).catch(() => {});
+
+    // Verify the cert was installed in the system trust store
+    const verifyResult = await sshExec(conn, `ls -la /usr/local/share/ca-certificates/pikvm-server.crt 2>&1 && echo '${escapedPassword}' | sudo -S test -f /etc/ssl/certs/pikvm-server.pem 2>/dev/null && echo "CERT_LINKED" || echo "CERT_NOT_LINKED"`, 10000);
+    const certInstalled = verifyResult.stdout.includes('pikvm-server.crt');
+    if (!certInstalled) {
+        return { success: false, message: 'התעודה הועתקה אך לא נמצאה בתיקיית ca-certificates — ייתכן שהעתקה נכשלה' };
     }
 
     // Also install for NSS (Chrome/Firefox use NSS database)
@@ -1326,7 +1360,7 @@ async function clientStageInstallCert(conn, sudoPassword) {
             // Upload and install libnss3-tools from local .deb
             const nssDebContent = fs.readFileSync(nssDebPath);
             await sshUploadBuffer(conn, nssDebContent, '/tmp/libnss3-tools.deb', 30000);
-            await sshExec(conn, `echo '${sudoPassword}' | sudo -S dpkg -i /tmp/libnss3-tools.deb 2>&1 || true`, 30000);
+            await sshExec(conn, `echo '${escapedPassword}' | sudo -S dpkg -i /tmp/libnss3-tools.deb 2>&1 || true`, 30000);
             await sshExec(conn, 'rm -f /tmp/libnss3-tools.deb', 5000);
         }
     }
@@ -1336,29 +1370,53 @@ async function clientStageInstallCert(conn, sudoPassword) {
     const nssScript = [
         '#!/bin/bash',
         'CERT_FILE="/usr/local/share/ca-certificates/pikvm-server.crt"',
+        'if ! [ -f "$CERT_FILE" ]; then',
+        '    echo "ERROR: Certificate file not found at $CERT_FILE"',
+        '    exit 1',
+        'fi',
         'if command -v certutil &>/dev/null; then',
+        '    ADDED=0',
         '    for user_home in /home/*; do',
         '        if [ -d "$user_home" ]; then',
         '            real_user=$(basename "$user_home")',
         '            for certDB in $(find "$user_home" -name "cert9.db" 2>/dev/null | sed \'s|/cert9.db||\'); do',
-        '                certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$certDB" 2>/dev/null || true',
+        '                certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$certDB" 2>/dev/null && ADDED=$((ADDED+1))',
         '            done',
         '            nss_dir="$user_home/.pki/nssdb"',
         '            mkdir -p "$nss_dir" 2>/dev/null || true',
-        '            certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$nss_dir" 2>/dev/null || true',
+        '            certutil -d sql:"$nss_dir" -N --empty-password 2>/dev/null || true',
+        '            certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$nss_dir" 2>/dev/null && ADDED=$((ADDED+1))',
         '            chown -R "$real_user:$real_user" "$nss_dir" 2>/dev/null || true',
         '        fi',
         '    done',
+        '    echo "NSS_ADDED=$ADDED"',
+        'else',
+        '    echo "NO_CERTUTIL"',
         'fi',
     ].join('\n');
 
     // Upload via sshUploadBuffer to avoid heredoc/quoting issues entirely
     await sshUploadBuffer(conn, Buffer.from(nssScript, 'utf8'), '/tmp/nss_cert_install.sh', 5000);
     await sshExec(conn, `chmod +x /tmp/nss_cert_install.sh`, 5000).catch(() => {});
-    await sshExec(conn, `echo '${sudoPassword}' | sudo -S bash /tmp/nss_cert_install.sh 2>&1`, 30000).catch(() => {});
+    const nssResult = await sshExec(conn, `echo '${escapedPassword}' | sudo -S bash /tmp/nss_cert_install.sh 2>&1`, 30000).catch(() => ({ stdout: '' }));
     await sshExec(conn, `rm -f /tmp/nss_cert_install.sh`, 5000).catch(() => {});
 
-    return { success: true, message: 'תעודת SSL הותקנה בהצלחה - הן במערכת והן בדפדפן (NSS)' };
+    // Build result message
+    const certLinked = verifyResult.stdout.includes('CERT_LINKED');
+    let message = 'תעודת SSL הותקנה בהצלחה במערכת';
+    if (certLinked) {
+        message += ' (מקושרת ב-trust store)';
+    }
+    if (nssResult.stdout && nssResult.stdout.includes('NSS_ADDED=')) {
+        const nssAdded = nssResult.stdout.match(/NSS_ADDED=(\d+)/);
+        if (nssAdded && parseInt(nssAdded[1]) > 0) {
+            message += ` + ${nssAdded[1]} מסדי NSS בדפדפן`;
+        }
+    } else if (nssResult.stdout && nssResult.stdout.includes('NO_CERTUTIL')) {
+        message += ' (certutil לא זמין — התעודה הותקנה ברמת המערכת בלבד)';
+    }
+
+    return { success: true, message };
 }
 
 // Client Stage: Configure NTP
@@ -1680,10 +1738,19 @@ app.post('/api/client-setup/generate-script', (req, res) => {
 
     // Read certificate for embedding in script
     let certBase64 = '';
+    let certValid = false;
     if (stages.includes('installCert')) {
         const certPath = path.join(SETUP_DIR, 'server.crt');
         if (fs.existsSync(certPath)) {
-            certBase64 = fs.readFileSync(certPath).toString('base64');
+            const certText = fs.readFileSync(certPath, 'utf8');
+            if (certText.includes('REPLACE_WITH_YOUR_CERTIFICATE') || certText.length < 200) {
+                return res.status(400).json({ message: 'קובץ server.crt מכיל תוכן placeholder — יש ליצור תעודה אמיתית (הרץ את generate_cert.ps1)' });
+            }
+            if (!certText.includes('-----BEGIN CERTIFICATE-----') || !certText.includes('-----END CERTIFICATE-----')) {
+                return res.status(400).json({ message: 'קובץ server.crt אינו תעודת PEM תקינה' });
+            }
+            certBase64 = Buffer.from(certText).toString('base64');
+            certValid = true;
         }
     }
 
@@ -1734,60 +1801,93 @@ TOTAL=${stages.length}
 # ──────────────────────────────────────
 echo -e "\${BLUE}[*] מתקין תעודת SSL...\${NC}"
 `;
-        if (certBase64) {
+        if (certBase64 && certValid) {
             script += `CERT_B64="${certBase64}"
-echo "$CERT_B64" | base64 -d > /usr/local/share/ca-certificates/pikvm-server.crt
-update-ca-certificates 2>/dev/null
+echo "$CERT_B64" | base64 -d > /tmp/pikvm-server.crt
 
-# Install certutil for Chrome/NSS certificate database
-if ! command -v certutil &>/dev/null; then
-    echo -e "\${YELLOW}[*] certutil לא נמצא, מנסה להתקין libnss3-tools מהשרת...\${NC}"
-    NSS_DEB="/tmp/libnss3-tools.deb"
-    NSS_URL="${serverUrl ? serverUrl.replace(/\/+$/, '') + '/api/client-setup/download/libnss3-tools' : ''}"
-    if [ -n "$NSS_URL" ]; then
-        if command -v wget &>/dev/null; then
-            wget -q --no-check-certificate -O "$NSS_DEB" "$NSS_URL" 2>/dev/null
-        elif command -v curl &>/dev/null; then
-            curl -sLk -o "$NSS_DEB" "$NSS_URL" 2>/dev/null
-        fi
-        if [ -f "$NSS_DEB" ] && [ -s "$NSS_DEB" ]; then
-            dpkg -i "$NSS_DEB" 2>/dev/null || true
-            rm -f "$NSS_DEB"
-        else
-            echo -e "\${YELLOW}[!] לא הצלחתי להוריד libnss3-tools.deb - ממשיך בלי NSS\${NC}"
-        fi
+# Verify decoded certificate is valid PEM
+if ! grep -q "BEGIN CERTIFICATE" /tmp/pikvm-server.crt 2>/dev/null; then
+    echo -e "\${RED}[✗] התעודה שהופקה אינה תקינה (לא PEM)\${NC}"
+    rm -f /tmp/pikvm-server.crt
+    FAILED=$((FAILED + 1))
+else
+    # Ensure target directory exists
+    mkdir -p /usr/local/share/ca-certificates 2>/dev/null
+
+    cp /tmp/pikvm-server.crt /usr/local/share/ca-certificates/pikvm-server.crt
+    if [ $? -ne 0 ]; then
+        echo -e "\${RED}[✗] שגיאה בהעתקת התעודה ל-ca-certificates\${NC}"
+        rm -f /tmp/pikvm-server.crt
+        FAILED=$((FAILED + 1))
     else
-        echo -e "\${YELLOW}[!] כתובת שרת לא הוגדרה - לא ניתן להוריד libnss3-tools\${NC}"
+        rm -f /tmp/pikvm-server.crt
+        update-ca-certificates 2>/dev/null
+        if [ $? -ne 0 ]; then
+            echo -e "\${YELLOW}[!] update-ca-certificates החזיר שגיאה — התעודה הועתקה אך ייתכן שלא הותקנה כראוי\${NC}"
+        fi
+
+        # Verify installation
+        if [ -f /usr/local/share/ca-certificates/pikvm-server.crt ]; then
+            echo -e "\${GREEN}[✓] תעודת SSL הותקנה ברמת המערכת\${NC}"
+        else
+            echo -e "\${RED}[✗] התעודה לא נמצאה לאחר ההתקנה\${NC}"
+            FAILED=$((FAILED + 1))
+        fi
+
+        # Install certutil for Chrome/NSS certificate database
+        if ! command -v certutil &>/dev/null; then
+            echo -e "\${YELLOW}[*] certutil לא נמצא, מנסה להתקין libnss3-tools מהשרת...\${NC}"
+            NSS_DEB="/tmp/libnss3-tools.deb"
+            NSS_URL="${serverUrl ? serverUrl.replace(/\/+$/, '') + '/api/client-setup/download/libnss3-tools' : ''}"
+            if [ -n "$NSS_URL" ]; then
+                if command -v wget &>/dev/null; then
+                    wget -q --no-check-certificate -O "$NSS_DEB" "$NSS_URL" 2>/dev/null
+                elif command -v curl &>/dev/null; then
+                    curl -sLk -o "$NSS_DEB" "$NSS_URL" 2>/dev/null
+                fi
+                if [ -f "$NSS_DEB" ] && [ -s "$NSS_DEB" ]; then
+                    dpkg -i "$NSS_DEB" 2>/dev/null || true
+                    rm -f "$NSS_DEB"
+                else
+                    echo -e "\${YELLOW}[!] לא הצלחתי להוריד libnss3-tools.deb - ממשיך בלי NSS\${NC}"
+                fi
+            else
+                echo -e "\${YELLOW}[!] כתובת שרת לא הוגדרה - לא ניתן להוריד libnss3-tools\${NC}"
+            fi
+        fi
+
+        # Add cert to all NSS databases (if certutil is available)
+        CERT_FILE="/usr/local/share/ca-certificates/pikvm-server.crt"
+        if command -v certutil &>/dev/null; then
+            NSS_ADDED=0
+            for certDB in $(find /home/ -name "cert9.db" 2>/dev/null | sed 's|/cert9.db||'); do
+                certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$certDB" 2>/dev/null && NSS_ADDED=$((NSS_ADDED+1))
+            done
+
+            # Also add to default NSS db for each user
+            for user_home in /home/*; do
+                if [ -d "$user_home" ]; then
+                    nss_dir="$user_home/.pki/nssdb"
+                    mkdir -p "$nss_dir" 2>/dev/null || true
+                    # Initialize NSS database if it doesn't exist
+                    certutil -d sql:"$nss_dir" -N --empty-password 2>/dev/null || true
+                    certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$nss_dir" 2>/dev/null && NSS_ADDED=$((NSS_ADDED+1))
+                    # Fix ownership
+                    real_user=$(basename "$user_home")
+                    chown -R "$real_user:$real_user" "$nss_dir" 2>/dev/null || true
+                fi
+            done
+            echo -e "\${GREEN}[✓] תעודה הותקנה ב-$NSS_ADDED מסדי NSS בדפדפן\${NC}"
+        else
+            echo -e "\${YELLOW}[!] certutil לא זמין - התעודה הותקנה ברמת המערכת בלבד\${NC}"
+            echo -e "\${YELLOW}    להתקנה בדפדפן, הנח libnss3-tools.deb בתיקיית setup בשרת\${NC}"
+        fi
+        PASSED=$((PASSED + 1))
     fi
 fi
-
-# Add cert to all NSS databases (if certutil is available)
-CERT_FILE="/usr/local/share/ca-certificates/pikvm-server.crt"
-if command -v certutil &>/dev/null; then
-    for certDB in $(find /home/ -name "cert9.db" 2>/dev/null | sed 's|/cert9.db||'); do
-        certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$certDB" 2>/dev/null || true
-    done
-
-    # Also add to default NSS db for each user
-    for user_home in /home/*; do
-        if [ -d "$user_home" ]; then
-            nss_dir="$user_home/.pki/nssdb"
-            mkdir -p "$nss_dir" 2>/dev/null || true
-            certutil -A -n "PiKVM Server" -t "CT,C,C" -i "$CERT_FILE" -d sql:"$nss_dir" 2>/dev/null || true
-            # Fix ownership
-            real_user=$(basename "$user_home")
-            chown -R "$real_user:$real_user" "$nss_dir" 2>/dev/null || true
-        fi
-    done
-    echo -e "\${GREEN}[✓] תעודת SSL הותקנה בהצלחה (מערכת + דפדפן)\${NC}"
-else
-    echo -e "\${YELLOW}[!] certutil לא זמין - התעודה הותקנה ברמת המערכת בלבד\${NC}"
-    echo -e "\${YELLOW}    להתקנה בדפדפן, הנח libnss3-tools.deb בתיקיית setup בשרת\${NC}"
-fi
-PASSED=$((PASSED + 1))
 `;
         } else {
-            script += `echo -e "\${RED}[✗] תעודת SSL לא נמצאה בשרת בעת יצירת הסקריפט\${NC}"
+            script += `echo -e "\${RED}[✗] תעודת SSL לא נמצאה בשרת בעת יצירת הסקריפט — ודא שקובץ server.crt תקין בתיקיית setup\${NC}"
 FAILED=$((FAILED + 1))
 `;
         }
