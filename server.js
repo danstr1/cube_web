@@ -1160,7 +1160,7 @@ async function stageInstallPythonLibs(conn) {
     const installCmd = `cd /tmp/python_lib
 # 1. Create a temporary virtual environment to bootstrap pip
 echo "Creating temporary virtual environment to bootstrap pip..."
-python3 -m venv /tmp/temp_venv
+python3 -m venv --system-site-packages /tmp/temp_venv
 if [ ! -f /tmp/temp_venv/bin/pip ]; then
     echo "ERROR: Failed to bootstrap pip inside virtual environment." >&2
     exit 1
@@ -1173,7 +1173,11 @@ if [ -z "$SITE_PKG" ]; then
 fi
 echo "Target site-packages directory: $SITE_PKG"
 
-# 3. Install packages to system site-packages using venv's pip
+# 3. Install build tools (setuptools, wheel, packaging) inside venv
+echo "Installing build tools (setuptools, wheel, packaging) inside venv..."
+/tmp/temp_venv/bin/pip install --no-index --find-links . setuptools wheel packaging
+
+# 4. Install packages to system site-packages using venv's pip
 echo "Installing python libraries to system site-packages..."
 if /tmp/temp_venv/bin/pip install --target "$SITE_PKG" --no-build-isolation --break-system-packages --no-index --find-links . adafruit-blinka adafruit-circuitpython-neopixel rpi_ws281x 2>&1; then
     echo "Installation successful."
@@ -1182,7 +1186,7 @@ else
     /tmp/temp_venv/bin/pip install --target "$SITE_PKG" --no-build-isolation --no-index --find-links . adafruit-blinka adafruit-circuitpython-neopixel rpi_ws281x
 fi
 
-# 4. Clean up the temporary venv
+# 5. Clean up the temporary venv
 rm -rf /tmp/temp_venv`;
 
     const installResult = await sshExec(conn, installCmd, 120000).catch(err => {
