@@ -448,6 +448,11 @@ app.post('/api/users/login', (req, res) => {
         console.error(`Failed to set heartbeat color to red for ${availableBox.ipAddress}: ${err.message}`);
     });
     
+    // Trigger ATX long press click (shutdown) asynchronously
+    triggerPiKVMATXClick(availableBox.ipAddress, 'power_long').catch(err => {
+        console.error(`Failed to trigger ATX power_long for ${availableBox.ipAddress}: ${err.message}`);
+    });
+    
     const identityMapping = db.identityMappings.find(m => m.id === numericId);
     
     res.json({
@@ -900,7 +905,7 @@ function directPikvmRequest(ip, path, method, adminPassword, bodyData = null) {
 // Test ATX components endpoint
 app.post('/api/setup/test-atx', async (req, res) => {
     const { ip, password, action } = req.body;
-    if (!ip || !password || !action) {
+    if (!ip || !action) {
         return res.status(400).json({ success: false, message: 'Missing parameters' });
     }
 
@@ -923,39 +928,22 @@ app.post('/api/setup/test-atx', async (req, res) => {
         }
 
         // 2. Perform action
-        if (action === 'led') {
-            // LED test still requires SSH to write and run the custom python script
+        if (action === 'led' || action === 'led_green' || action === 'led_red' || action === 'led_off') {
+            const color = action === 'led' ? 'colorized' : (action === 'led_green' ? 'green' : (action === 'led_red' ? 'red' : 'off'));
             let conn;
             try {
                 conn = await createSshConnection(ip, password);
-                const pythonScript = `import time, board, neopixel
-
-led = neopixel.NeoPixel(board.D12, 1, pixel_order=neopixel.RGB)
-
-def set_rgb(r, g, b):
-	led[0] = (r, g, b)
-	time.sleep(0.2)
-
-for i in range(50):
-	set_rgb(255, 3*i, 0)
-	set_rgb(0, 255, 3*i)
-	set_rgb(3*i, 0, 255)
-
-# Turn off LED after test
-led[0] = (0, 0, 0)
-`;
-                const base64Script = Buffer.from(pythonScript).toString('base64');
-                const uploadCmd = `echo '${base64Script}' | base64 -d > /tmp/test_led.py`;
-                await sshExec(conn, uploadCmd);
-                
-                const execResult = await sshExec(conn, 'python3 /tmp/test_led.py', 60000);
-                await sshExec(conn, 'rm -f /tmp/test_led.py');
-                
-                if (execResult.code !== 0) {
-                    res.json({ success: false, message: `LED test script failed: ${execResult.stderr || execResult.stdout}` });
+                // Write color to /tmp/heartbeat.color (the running heartbeat script reads this dynamically)
+                const cmd = `echo "${color}" > /tmp/heartbeat.color`;
+                const result = await sshExec(conn, cmd);
+                if (result.code !== 0) {
+                    res.json({ success: false, message: `שינוי מצב LED נכשל: ${result.stderr}` });
                 } else {
-                    res.json({ success: true, message: 'בדיקת ה-LED הושלמה בהצלחה (הסתיים הרצת הקוד)' });
+                    const colorHeb = color === 'colorized' ? 'צבעוני' : (color === 'green' ? 'ירוק' : (color === 'red' ? 'אדום' : 'כבוי'));
+                    res.json({ success: true, message: `הגדרת פעימות LED ל-${colorHeb} בוצעה בהצלחה` });
                 }
+            } catch (err) {
+                res.json({ success: false, message: `שגיאה בחיבור ל-PiKVM: ${err.message}` });
             } finally {
                 if (conn) conn.end();
             }
@@ -1535,6 +1523,25 @@ def write_pid():
     except Exception:
         pass
 
+def get_current_state():
+    color = 'green'
+    try:
+        if os.path.exists('/tmp/heartbeat.color'):
+            with open('/tmp/heartbeat.color', 'r') as f:
+                color = f.read().strip()
+    except Exception:
+        pass
+    
+    mode = 'green_red'
+    try:
+        if os.path.exists('/etc/kvmd/heartbeat.mode'):
+            with open('/etc/kvmd/heartbeat.mode', 'r') as f:
+                mode = f.read().strip()
+    except Exception:
+        pass
+        
+    return color, mode
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--color', type=str, default='green', choices=['green', 'red', 'off'])
@@ -1551,81 +1558,144 @@ def main():
         sys.exit(1)
 
     MAX_VAL = 120
+    MIN_VAL = 40
     
-    # Read mode from /etc/kvmd/heartbeat.mode (defaults to green_red if not found)
-    mode = 'green_red'
-    try:
-        if os.path.exists('/etc/kvmd/heartbeat.mode'):
-            with open('/etc/kvmd/heartbeat.mode', 'r') as f:
-                mode = f.read().strip()
-    except Exception:
-        pass
-
-    # Read color overrides from /tmp/heartbeat.color (defaults to green)
-    color = 'green'
-    try:
-        if os.path.exists('/tmp/heartbeat.color'):
-            with open('/tmp/heartbeat.color', 'r') as f:
-                color = f.read().strip()
-    except Exception:
-        pass
-
-    # If argparse got a command line flag, override color
+    # If argparse got a command line flag (used when called from shell directly), write it to color file
     if args.color != 'green':
-        color = args.color
+        try:
+            with open('/tmp/heartbeat.color', 'w') as f:
+                f.write(args.color)
+        except Exception:
+            pass
 
-    def set_color(val):
-        if mode == 'disabled':
-            led[0] = (0, 0, 0)
-        elif color == 'green':
+    def set_color(color_name, val):
+        if color_name == 'green':
             led[0] = (0, val, 0)
-        elif color == 'red':
-            if mode == 'green_red':
-                led[0] = (val, 0, 0)
-            elif mode == 'green_off':
-                led[0] = (0, 0, 0)
-            else:
-                led[0] = (0, val, 0)
+        elif color_name == 'red':
+            led[0] = (val, 0, 0)
         else:
             led[0] = (0, 0, 0)
 
     def handle_exit(signum, frame):
-        set_color(0)
+        led[0] = (0, 0, 0)
         sys.exit(0)
         
     signal.signal(signal.SIGTERM, handle_exit)
     signal.signal(signal.SIGINT, handle_exit)
 
-    if mode == 'disabled' or color == 'off':
-        set_color(0)
-        sys.exit(0)
-
     try:
         while True:
-            # Pulse 1: Fade up from 0 to MAX_VAL
-            for val in range(0, MAX_VAL + 1, 8):
-                set_color(val)
-                time.sleep(0.015)
-            # Pulse 1: Fade down from MAX_VAL to 20
-            for val in range(MAX_VAL, 19, -8):
-                set_color(val)
-                time.sleep(0.015)
-            # Pulse 2: Fade up from 20 to MAX_VAL
-            for val in range(20, MAX_VAL + 1, 8):
-                set_color(val)
-                time.sleep(0.015)
-            # Pulse 2: Fade down from MAX_VAL to 0
-            for val in range(MAX_VAL, -1, -8):
-                set_color(val)
-                time.sleep(0.015)
+            color, mode = get_current_state()
+
+            if mode == 'disabled' or color == 'off':
+                led[0] = (0, 0, 0)
+                time.sleep(0.2)
+                continue
+
+            if color == 'colorized':
+                state_changed = False
+                for i in range(50):
+                    # Cycling Step 1: Red to Yellow
+                    led[0] = (255, 3 * i, 0)
+                    for _ in range(20):
+                        time.sleep(0.01)
+                        c, m = get_current_state()
+                        if c != 'colorized' or m == 'disabled':
+                            state_changed = True
+                            break
+                    if state_changed: break
+
+                    # Cycling Step 2: Green to Cyan
+                    led[0] = (0, 255, 3 * i)
+                    for _ in range(20):
+                        time.sleep(0.01)
+                        c, m = get_current_state()
+                        if c != 'colorized' or m == 'disabled':
+                            state_changed = True
+                            break
+                    if state_changed: break
+
+                    # Cycling Step 3: Blue to Magenta
+                    led[0] = (3 * i, 0, 255)
+                    for _ in range(20):
+                        time.sleep(0.01)
+                        c, m = get_current_state()
+                        if c != 'colorized' or m == 'disabled':
+                            state_changed = True
+                            break
+                    if state_changed: break
                 
-            # Pause
-            set_color(0)
-            time.sleep(1.5)
+                if state_changed:
+                    continue
+                
+                # After cycling test completes, revert color state to green heartbeat
+                try:
+                    with open('/tmp/heartbeat.color', 'w') as f:
+                        f.write('green')
+                except Exception:
+                    pass
+                continue
+
+            if color == 'red' and mode == 'green_off':
+                led[0] = (0, 0, 0)
+                time.sleep(0.2)
+                continue
+
+            # Pulse 1: Fade up from MIN_VAL to MAX_VAL
+            state_changed = False
+            for val in range(MIN_VAL, MAX_VAL + 1, 4):
+                set_color(color, val)
+                time.sleep(0.015)
+                c, m = get_current_state()
+                if c != color or m != mode:
+                    state_changed = True
+                    break
+            if state_changed: continue
+
+            # Pulse 1: Fade down from MAX_VAL to MIN_VAL + 20
+            for val in range(MAX_VAL, MIN_VAL + 19, -4):
+                set_color(color, val)
+                time.sleep(0.015)
+                c, m = get_current_state()
+                if c != color or m != mode:
+                    state_changed = True
+                    break
+            if state_changed: continue
+
+            # Pulse 2: Fade up from MIN_VAL + 20 to MAX_VAL
+            for val in range(MIN_VAL + 20, MAX_VAL + 1, 4):
+                set_color(color, val)
+                time.sleep(0.015)
+                c, m = get_current_state()
+                if c != color or m != mode:
+                    state_changed = True
+                    break
+            if state_changed: continue
+
+            # Pulse 2: Fade down from MAX_VAL to MIN_VAL
+            for val in range(MAX_VAL, MIN_VAL - 1, -4):
+                set_color(color, val)
+                time.sleep(0.015)
+                c, m = get_current_state()
+                if c != color or m != mode:
+                    state_changed = True
+                    break
+            if state_changed: continue
+
+            # Pause: stay at MIN_VAL for 1.5 seconds (check state every 100ms)
+            set_color(color, MIN_VAL)
+            for _ in range(15):
+                time.sleep(0.1)
+                c, m = get_current_state()
+                if c != color or m != mode:
+                    state_changed = True
+                    break
+            if state_changed: continue
+
     except KeyboardInterrupt:
         pass
     finally:
-        set_color(0)
+        led[0] = (0, 0, 0)
 
 if __name__ == "__main__":
     main()
@@ -1691,14 +1761,39 @@ async function setPiKVMHeartbeatColor(ipAddress, color) {
     let conn;
     try {
         conn = await createSshConnection(ipAddress);
-        // Write color to /tmp/heartbeat.color and restart the service
+        // Write color to /tmp/heartbeat.color (no service restart needed, the script reads this dynamically)
         // /tmp is a writeable memory partition (tmpfs) so we do not need "rw" mode
-        await sshExec(conn, `echo "${color}" > /tmp/heartbeat.color && systemctl restart heartbeat`);
+        await sshExec(conn, `echo "${color}" > /tmp/heartbeat.color`);
         console.log(`Successfully set heartbeat color to ${color} on PiKVM at ${ipAddress}`);
     } catch (err) {
         console.error(`Failed to set heartbeat color to ${color} on PiKVM at ${ipAddress}:`, err.message);
     } finally {
         if (conn) conn.end();
+    }
+}
+
+// Helper: trigger ATX button click on a box asynchronously
+async function triggerPiKVMATXClick(ipAddress, action) {
+    try {
+        let adminPassword = adminPasswordCache.get(ipAddress);
+        if (!adminPassword) {
+            let conn;
+            try {
+                conn = await createSshConnection(ipAddress);
+                const passResult = await sshExec(conn, 'cat /tmp/web.txt 2>/dev/null || echo "admin"');
+                adminPassword = passResult.stdout.trim() || 'admin';
+                adminPasswordCache.set(ipAddress, adminPassword);
+            } catch (sshErr) {
+                console.error(`SSH connection failed to get admin password for ATX click on ${ipAddress}:`, sshErr.message);
+                adminPassword = 'admin';
+            } finally {
+                if (conn) conn.end();
+            }
+        }
+        await directPikvmRequest(ipAddress, `/api/atx/click?button=${action}`, 'POST', adminPassword);
+        console.log(`Successfully triggered ATX ${action} click on PiKVM at ${ipAddress}`);
+    } catch (err) {
+        console.error(`Failed to trigger ATX ${action} click on PiKVM at ${ipAddress}:`, err.message);
     }
 }
 

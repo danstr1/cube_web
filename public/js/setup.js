@@ -55,7 +55,7 @@ const STAGES = {
     configureHeartbeat: {
         id: 'configureHeartbeat',
         name: 'הגדרת Heartbeat LED',
-        icon: '💚'
+        icon: '🟢'
     },
     changePassword: {
         id: 'changePassword',
@@ -70,6 +70,7 @@ const STAGES = {
 };
 
 let isRunning = false;
+let defaultSshPassword = '';
 let uploadedLogoBase64 = null;
 let logoSource = 'default'; // 'default' or 'upload'
 let currentAbortController = null; // For skipping stages
@@ -95,6 +96,7 @@ async function loadSshPassword() {
         const response = await fetch('/api/setup/ssh-password');
         const data = await response.json();
         if (data.password) {
+            defaultSshPassword = data.password;
             input.value = data.password;
             source.textContent = `נטען מ-ssh_password`;
             source.style.color = 'var(--secondary-color)';
@@ -276,11 +278,13 @@ async function testConnection() {
     testBtn.disabled = true;
     showConnectionStatus('testing', 'בודק חיבור...');
 
+    const sendPassword = (password === defaultSshPassword) ? '' : password;
+
     try {
         const response = await fetch('/api/setup/test-connection', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip, password })
+            body: JSON.stringify({ ip, password: sendPassword })
         });
 
         const result = await response.json();
@@ -602,11 +606,12 @@ function showSkipButton(show) {
 // Execute a single stage via API
 async function executeStage(stageId, currentIp, newIp, allStages) {
     const password = document.getElementById('sshPassword').value.trim();
+    const sendPassword = (password === defaultSshPassword) ? '' : password;
     const body = { 
         stage: stageId, 
         currentIp,
         newIp,
-        password
+        password: sendPassword
     };
 
     // If this is the logo stage and user uploaded a file, send it
@@ -631,10 +636,9 @@ async function executeStage(stageId, currentIp, newIp, allStages) {
         body.atxDelay = sliderEl ? parseFloat(sliderEl.value) : 1.0;
     }
 
-    // If this is the configureHeartbeat stage, send the selected mode
+    // If this is the configureHeartbeat stage, send the default mode
     if (stageId === 'configureHeartbeat') {
-        const selectEl = document.getElementById('heartbeatModeSelect');
-        body.heartbeatMode = selectEl ? selectEl.value : 'green_red';
+        body.heartbeatMode = 'green_red';
     }
 
     // Create abort controller for skip/timeout support
@@ -774,13 +778,15 @@ function startAtxStatusPolling() {
 async function refreshAtxStatus() {
     const ip = document.getElementById('currentIp').value.trim();
     const password = document.getElementById('sshPassword').value.trim();
-    if (!ip || !password) return;
+    if (!ip) return;
+
+    const sendPassword = (password === defaultSshPassword) ? '' : password;
 
     try {
         const response = await fetch('/api/setup/test-atx', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip, password, action: 'status' })
+            body: JSON.stringify({ ip, password: sendPassword, action: 'status' })
         });
         const result = await response.json();
         
@@ -827,10 +833,12 @@ function updateStatusUi(powerOn) {
 async function runComponentTest(action) {
     const ip = document.getElementById('currentIp').value.trim();
     const password = document.getElementById('sshPassword').value.trim();
-    if (!ip || !password) {
-        alert('אנא הזן כתובת IP וסיסמה תחילה');
+    if (!ip) {
+        alert('אנא הזן כתובת IP תחילה');
         return;
     }
+
+    const sendPassword = (password === defaultSshPassword) ? '' : password;
 
     const logEl = document.getElementById('testOutputLog');
     if (logEl) {
@@ -843,7 +851,7 @@ async function runComponentTest(action) {
         const response = await fetch('/api/setup/test-atx', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip, password, action })
+            body: JSON.stringify({ ip, password: sendPassword, action })
         });
         const result = await response.json();
         
@@ -852,7 +860,7 @@ async function runComponentTest(action) {
                 logEl.textContent = `✅ בדיקה הושלמה: ${result.message || 'הפקודה נשלחה בהצלחה'}`;
                 logEl.style.color = 'var(--secondary-color)';
                 
-                if (action !== 'led') {
+                if (!action.startsWith('led')) {
                     setTimeout(refreshAtxStatus, 1000);
                 }
             } else {
