@@ -498,6 +498,20 @@ async function runSetup() {
         try {
             const result = await executeStage(stageId, currentIp, newIp, selectedStages);
 
+            if (result && result.logs && Array.isArray(result.logs)) {
+                result.logs.forEach(line => {
+                    let logType = 'info';
+                    if (line.includes('ERROR:') || line.includes('error:') || line.includes('failed:')) {
+                        logType = 'error';
+                    } else if (line.includes('WARNING:') || line.includes('warning:')) {
+                        logType = 'warning';
+                    } else if (line.includes('successful') || line.includes('Installation successful')) {
+                        logType = 'success';
+                    }
+                    addLog('   ' + line, logType);
+                });
+            }
+
             if (result.skipped) {
                 updateStageProgress(stageId, 'failed', 'דולג');
                 addLog(`⏭️ ${stage.name} דולג על ידי המשתמש`, 'warning');

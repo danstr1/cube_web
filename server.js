@@ -1103,6 +1103,8 @@ async function stageDisableClosePopup(conn) {
 
 // Stage: Install Python libraries offline
 async function stageInstallPythonLibs(conn) {
+    const logs = [];
+    
     if (!fs.existsSync(PYTHON_LIB_DIR)) {
         return { success: false, message: `Local directory not found: ${PYTHON_LIB_DIR}` };
     }
@@ -1118,13 +1120,19 @@ async function stageInstallPythonLibs(conn) {
         return { success: false, message: `No library files found in local directory: ${PYTHON_LIB_DIR}` };
     }
 
+    logs.push(`Found ${files.length} library files to deliver.`);
+
     // Create remote folder /tmp/python_lib
+    logs.push(`Creating remote directory /tmp/python_lib on PiKVM...`);
     const mkdirResult = await sshExec(conn, 'mkdir -p /tmp/python_lib');
     if (mkdirResult.code !== 0) {
-        return { success: false, message: `Failed to create remote directory: ${mkdirResult.stderr || mkdirResult.stdout}` };
+        logs.push(`ERROR: Failed to create remote directory: ${mkdirResult.stderr || mkdirResult.stdout}`);
+        return { success: false, message: 'Failed to create remote directory', logs };
     }
+    logs.push(`Remote directory created successfully.`);
 
     // Upload files sequentially
+    logs.push(`Starting file transfer (delivering libraries)...`);
     for (const file of files) {
         const localPath = path.join(PYTHON_LIB_DIR, file);
         const remotePath = `/tmp/python_lib/${file}`;
@@ -1134,35 +1142,84 @@ async function stageInstallPythonLibs(conn) {
             continue;
         }
 
+        logs.push(`Uploading: ${file} (${fs.statSync(localPath).size} bytes)`);
         try {
             await sshUploadFile(conn, localPath, remotePath);
         } catch (err) {
+            logs.push(`ERROR: Failed to upload ${file}: ${err.message}`);
             // Clean up directory on error
             await sshExec(conn, 'rm -rf /tmp/python_lib');
-            return { success: false, message: `Failed to upload file ${file}: ${err.message}` };
+            return { success: false, message: `Failed to upload file ${file}`, logs };
         }
     }
+    logs.push(`All library files delivered successfully to PiKVM.`);
 
     // Run installation command
     // Set a long timeout (120000ms) for compiling/installing python packages
-    const installCmd = 'cd /tmp/python_lib && sudo pip3 install --no-index --find-links . adafruit-blinka adafruit-circuitpython-neopixel rpi_ws281x';
+    logs.push(`Executing offline pip installation script...`);
+    const installCmd = `cd /tmp/python_lib
+# 1. Create a temporary virtual environment to bootstrap pip
+echo "Creating temporary virtual environment to bootstrap pip..."
+python3 -m venv /tmp/temp_venv
+if [ ! -f /tmp/temp_venv/bin/pip ]; then
+    echo "ERROR: Failed to bootstrap pip inside virtual environment." >&2
+    exit 1
+fi
+
+# 2. Get system site-packages path
+SITE_PKG=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
+if [ -z "$SITE_PKG" ]; then
+    SITE_PKG="/usr/lib/python3.10/site-packages"
+fi
+echo "Target site-packages directory: $SITE_PKG"
+
+# 3. Install packages to system site-packages using venv's pip
+echo "Installing python libraries to system site-packages..."
+if /tmp/temp_venv/bin/pip install --target "$SITE_PKG" --no-build-isolation --break-system-packages --no-index --find-links . adafruit-blinka adafruit-circuitpython-neopixel rpi_ws281x 2>&1; then
+    echo "Installation successful."
+else
+    echo "Retrying without --break-system-packages..."
+    /tmp/temp_venv/bin/pip install --target "$SITE_PKG" --no-build-isolation --no-index --find-links . adafruit-blinka adafruit-circuitpython-neopixel rpi_ws281x
+fi
+
+# 4. Clean up the temporary venv
+rm -rf /tmp/temp_venv`;
+
     const installResult = await sshExec(conn, installCmd, 120000).catch(err => {
         return { code: -1, stderr: err.message, stdout: '' };
     });
 
+    // Parse command outputs
+    if (installResult.stdout) {
+        installResult.stdout.split('\n').forEach(line => {
+            if (line.trim()) logs.push(line.trim());
+        });
+    }
+    if (installResult.stderr) {
+        installResult.stderr.split('\n').forEach(line => {
+            if (line.trim()) logs.push(`ERROR: ${line.trim()}`);
+        });
+    }
+
     // Clean up uploaded files in all cases
+    logs.push(`Cleaning up temporary remote files...`);
     await sshExec(conn, 'rm -rf /tmp/python_lib');
+    logs.push(`Cleanup complete.`);
 
     if (installResult.code !== 0) {
+        logs.push(`ERROR: Installation script exited with code ${installResult.code}`);
         return { 
             success: false, 
-            message: `Installation failed: ${installResult.stderr || installResult.stdout || 'Command failed'}` 
+            message: 'pip installation command failed', 
+            logs 
         };
     }
 
+    logs.push(`Installation process finished successfully.`);
     return { 
         success: true, 
-        message: 'ספריות Python הועתקו והותקנו בהצלחה במערכת' 
+        message: 'ספריות Python הועתקו והותקנו בהצלחה במערכת',
+        logs
     };
 }
 
