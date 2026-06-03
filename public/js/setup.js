@@ -37,6 +37,11 @@ const STAGES = {
         name: 'העבר עכבר למצב relative',
         icon: '🖱️'
     },
+    configureAtxDelay: {
+        id: 'configureAtxDelay',
+        name: 'הגדרת השהיית לחיצה ארוכה (ATX)',
+        icon: '⏱️'
+    },
     disableClosePopup: {
         id: 'disableClosePopup',
         name: 'בטל חלון קופץ בעת יציאה',
@@ -615,6 +620,12 @@ async function executeStage(stageId, currentIp, newIp, allStages) {
         body.skipNetworkRestart = true;
     }
 
+    // If this is the configureAtxDelay stage, send the slider delay value
+    if (stageId === 'configureAtxDelay') {
+        const sliderEl = document.getElementById('atxDelaySlider');
+        body.atxDelay = sliderEl ? parseFloat(sliderEl.value) : 1.0;
+    }
+
     // Create abort controller for skip/timeout support
     currentAbortController = new AbortController();
     const signal = currentAbortController.signal;
@@ -724,6 +735,14 @@ function resetForm() {
     document.getElementById('logoDropzone').classList.remove('has-file');
     document.getElementById('logoPreview').classList.remove('active');
 
+    // Reset ATX delay slider
+    const sliderEl = document.getElementById('atxDelaySlider');
+    if (sliderEl) {
+        sliderEl.value = '1.0';
+        const labelEl = document.getElementById('delayVal');
+        if (labelEl) labelEl.textContent = '1.0';
+    }
+
     // Re-select all stages
     selectAll();
 
@@ -758,12 +777,15 @@ async function refreshAtxStatus() {
             try {
                 const statusObj = JSON.parse(result.status);
                 const resObj = statusObj.result || statusObj;
-                const leds = resObj.leds || {};
                 
-                const power = (leds.power !== undefined) ? leds.power : resObj.power;
-                const hdd = (leds.hdd !== undefined) ? leds.hdd : resObj.hdd;
+                // Support both flat layout and nested atx/leds layout
+                const atxObj = resObj.atx || resObj;
+                const leds = atxObj.leds || {};
                 
-                updateStatusUi(!!power, !!hdd);
+                const power = (leds.power !== undefined) ? leds.power : 
+                              ((atxObj.power !== undefined) ? atxObj.power : resObj.power);
+                
+                updateStatusUi(!!power);
             } catch (err) {
                 console.error("Failed to parse ATX status JSON:", err);
             }
@@ -773,35 +795,20 @@ async function refreshAtxStatus() {
     }
 }
 
-function updateStatusUi(powerOn, hddActive) {
+function updateStatusUi(powerOn) {
     const powerBadge = document.getElementById('powerStatusBadge');
-    const hddBadge = document.getElementById('hddStatusBadge');
     
     if (powerBadge) {
         if (powerOn) {
             powerBadge.style.background = 'rgba(46, 204, 113, 0.2)';
             powerBadge.style.borderColor = 'var(--secondary-color)';
             powerBadge.style.color = 'var(--secondary-color)';
-            powerBadge.innerHTML = '<span style="width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; animation: pulse 1.5s infinite;"></span>ON';
+            powerBadge.innerHTML = '<span style="width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; animation: pulse 1.5s infinite;"></span>פתוח';
         } else {
             powerBadge.style.background = 'rgba(231, 76, 60, 0.2)';
             powerBadge.style.borderColor = 'var(--danger-color)';
             powerBadge.style.color = 'var(--danger-color)';
-            powerBadge.innerHTML = '<span style="width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block;"></span>OFF';
-        }
-    }
-    
-    if (hddBadge) {
-        if (hddActive) {
-            hddBadge.style.background = 'rgba(243, 156, 18, 0.2)';
-            hddBadge.style.borderColor = 'var(--warning-color)';
-            hddBadge.style.color = 'var(--warning-color)';
-            hddBadge.innerHTML = '<span style="width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; animation: pulse 0.5s infinite;"></span>ACTIVE';
-        } else {
-            hddBadge.style.background = 'rgba(255, 255, 255, 0.05)';
-            hddBadge.style.borderColor = 'var(--glass-border)';
-            hddBadge.style.color = 'var(--text-muted)';
-            hddBadge.innerHTML = '<span style="width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block;"></span>IDLE';
+            powerBadge.innerHTML = '<span style="width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block;"></span>סגור';
         }
     }
 }

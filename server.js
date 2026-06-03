@@ -95,7 +95,7 @@ if __name__ == "__main__":
                             if (writeError) console.log('Write stderr:', writeError);
                             
                             // Step 2: Save the password to a temp file
-                            const savePasswordCmd = `echo '${newPassword}' > /tmp/current_password.txt`;
+                            const savePasswordCmd = `echo '${newPassword}' > /tmp/current_password.txt && echo '${newPassword}' > /tmp/web.txt`;
                             
                             console.log('Saving password to file...');
                             conn.exec(savePasswordCmd, (err, stream) => {
@@ -819,6 +819,64 @@ app.post('/api/setup/test-connection', async (req, res) => {
     }
 });
 
+const http = require('http');
+const https = require('https');
+
+// Global cache for PiKVM admin passwords to avoid SSH connection overhead
+const adminPasswordCache = new Map(); // ip -> adminPassword
+
+// Helper to check if string is valid JSON
+function isValidJson(str) {
+    try {
+        const obj = JSON.parse(str);
+        return typeof obj === 'object' && obj !== null;
+    } catch (e) {
+        return false;
+    }
+}
+
+// Helper to make direct HTTPS requests to the local PiKVM API
+function directPikvmRequest(ip, path, method, adminPassword, bodyData = null) {
+    return new Promise((resolve, reject) => {
+        const auth = Buffer.from(`admin:${adminPassword}`).toString('base64');
+        const options = {
+            hostname: ip,
+            port: 443,
+            path: path,
+            method: method,
+            headers: {
+                'Authorization': `Basic ${auth}`,
+                'Content-Type': 'application/json'
+            },
+            rejectUnauthorized: false, // Insecure: equivalent to curl -k
+            timeout: 5000
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                    resolve({ statusCode: res.statusCode, body: data });
+                } else {
+                    reject(new Error(`HTTP Error ${res.statusCode}: ${data}`));
+                }
+            });
+        });
+
+        req.on('error', (err) => reject(err));
+        req.on('timeout', () => {
+            req.destroy();
+            reject(new Error('Request timed out'));
+        });
+
+        if (bodyData) {
+            req.write(bodyData);
+        }
+        req.end();
+    });
+}
+
 // Test ATX components endpoint
 app.post('/api/setup/test-atx', async (req, res) => {
     const { ip, password, action } = req.body;
@@ -826,101 +884,114 @@ app.post('/api/setup/test-atx', async (req, res) => {
         return res.status(400).json({ success: false, message: 'Missing parameters' });
     }
 
-    let conn;
     try {
-        conn = await createSshConnection(ip, password);
+        // 1. Get or retrieve admin password
+        let adminPassword = adminPasswordCache.get(ip);
+        if (!adminPassword) {
+            let conn;
+            try {
+                conn = await createSshConnection(ip, password);
+                const passResult = await sshExec(conn, 'cat /tmp/web.txt 2>/dev/null || echo "admin"');
+                adminPassword = passResult.stdout.trim() || 'admin';
+                adminPasswordCache.set(ip, adminPassword);
+            } catch (sshErr) {
+                console.error(`SSH connection failed to get admin password, assuming 'admin':`, sshErr.message);
+                adminPassword = 'admin';
+            } finally {
+                if (conn) conn.end();
+            }
+        }
 
-        let result;
+        // 2. Perform action
         if (action === 'led') {
-            // Write Python script to file
-            const pythonScript = `import time, board, neopixel
+            // LED test still requires SSH to write and run the custom python script
+            let conn;
+            try {
+                conn = await createSshConnection(ip, password);
+                const pythonScript = `import time, board, neopixel
 
 led = neopixel.NeoPixel(board.D12, 1, pixel_order=neopixel.RGB)
 
 def set_rgb(r, g, b):
-\tled[0] = (r, g, b)
-\ttime.sleep(0.2)
+	led[0] = (r, g, b)
+	time.sleep(0.2)
 
 for i in range(50):
-\tset_rgb(255, 3*i, 0)
-\tset_rgb(0, 255, 3*i)
-\tset_rgb(3*i, 0, 255)
+	set_rgb(255, 3*i, 0)
+	set_rgb(0, 255, 3*i)
+	set_rgb(3*i, 0, 255)
 
 # Turn off LED after test
 led[0] = (0, 0, 0)
 `;
-            // Base64 encode script to upload securely via command line without escaping errors
-            const base64Script = Buffer.from(pythonScript).toString('base64');
-            const uploadCmd = `echo '${base64Script}' | base64 -d > /tmp/test_led.py`;
-            await sshExec(conn, uploadCmd);
-            
-            // Execute python script
-            const execResult = await sshExec(conn, 'python3 /tmp/test_led.py', 60000);
-            
-            // Delete python script
-            await sshExec(conn, 'rm -f /tmp/test_led.py');
-            
-            if (execResult.code !== 0) {
-                result = { success: false, message: `LED test script failed: ${execResult.stderr || execResult.stdout}` };
-            } else {
-                result = { success: true, message: 'בדיקת ה-LED הושלמה בהצלחה (הסתיים הרצת הקוד)' };
+                const base64Script = Buffer.from(pythonScript).toString('base64');
+                const uploadCmd = `echo '${base64Script}' | base64 -d > /tmp/test_led.py`;
+                await sshExec(conn, uploadCmd);
+                
+                const execResult = await sshExec(conn, 'python3 /tmp/test_led.py', 60000);
+                await sshExec(conn, 'rm -f /tmp/test_led.py');
+                
+                if (execResult.code !== 0) {
+                    res.json({ success: false, message: `LED test script failed: ${execResult.stderr || execResult.stdout}` });
+                } else {
+                    res.json({ success: true, message: 'בדיקת ה-LED הושלמה בהצלחה (הסתיים הרצת הקוד)' });
+                }
+            } finally {
+                if (conn) conn.end();
             }
         } 
         else if (action === 'status') {
-            // Query ATX status from KVMD socket
-            const statusResult = await sshExec(conn, 'curl -s --unix-socket /run/kvmd/kvmd.sock http://localhost/api/atx');
-            if (statusResult.code === 0) {
-                result = { success: true, status: statusResult.stdout };
-            } else {
-                // Try reading Prometheus endpoint if api/atx fails or is not supported
-                const promResult = await sshExec(conn, 'curl -s http://localhost/api/export/prometheus/metrics');
-                if (promResult.code === 0) {
-                    const powerMetric = promResult.stdout.match(/pikvm_atx_power\s+(\d+)/);
+            try {
+                const response = await directPikvmRequest(ip, '/api/atx', 'GET', adminPassword);
+                res.json({ success: true, status: response.body });
+            } catch (err) {
+                // Try reading Prometheus endpoint as fallback
+                try {
+                    const promResponse = await new Promise((resolve, reject) => {
+                        const options = {
+                            hostname: ip,
+                            port: 80,
+                            path: '/api/export/prometheus/metrics',
+                            method: 'GET',
+                            timeout: 3000
+                        };
+                        const preq = http.get(options, (pres) => {
+                            let pdata = '';
+                            pres.on('data', (chunk) => { pdata += chunk; });
+                            pres.on('end', () => {
+                                if (pres.statusCode === 200) resolve(pdata);
+                                else reject(new Error(`Status ${pres.statusCode}`));
+                            });
+                        });
+                        preq.on('error', (pe) => reject(pe));
+                        preq.on('timeout', () => { preq.destroy(); reject(new Error('Timeout')); });
+                    });
+
+                    const powerMetric = promResponse.match(/pikvm_atx_power\s+(\d+)/);
+                    const hddMetric = promResponse.match(/pikvm_atx_hdd\s+(\d+)/);
                     const powerOn = powerMetric ? powerMetric[1] === '1' : false;
-                    result = { 
+                    const hddActive = hddMetric ? hddMetric[1] === '1' : false;
+                    res.json({ 
                         success: true, 
-                        status: JSON.stringify({ ok: true, result: { power: powerOn, hdd: false } }) 
-                    };
-                } else {
-                    result = { success: false, message: `Failed to query ATX status: ${statusResult.stderr}` };
+                        status: JSON.stringify({ ok: true, result: { leds: { power: powerOn, hdd: hddActive } } }) 
+                    });
+                } catch (promErr) {
+                    res.json({ success: false, message: `Failed to query ATX status: ${err.message} (Prometheus: ${promErr.message})` });
                 }
             }
         }
-        else if (action === 'power') {
-            // Power button click (0.5s)
-            const clickResult = await sshExec(conn, 'curl -s -X POST --unix-socket /run/kvmd/kvmd.sock http://localhost/api/atx/click?button=power');
-            if (clickResult.code === 0) {
-                result = { success: true, message: 'פקודת כפתור הפעלה נשלחה' };
-            } else {
-                result = { success: false, message: `נכשל בשליחת פקודה: ${clickResult.stderr}` };
-            }
-        }
-        else if (action === 'power_long') {
-            // Power button long click (5s)
-            const clickResult = await sshExec(conn, 'curl -s -X POST --unix-socket /run/kvmd/kvmd.sock http://localhost/api/atx/click?button=power_long');
-            if (clickResult.code === 0) {
-                result = { success: true, message: 'פקודת לחיצה ארוכה על כפתור הפעלה נשלחה' };
-            } else {
-                result = { success: false, message: `נכשל בשליחת פקודה: ${clickResult.stderr}` };
-            }
-        }
-        else if (action === 'reset') {
-            // Reset button click
-            const clickResult = await sshExec(conn, 'curl -s -X POST --unix-socket /run/kvmd/kvmd.sock http://localhost/api/atx/click?button=reset');
-            if (clickResult.code === 0) {
-                result = { success: true, message: 'פקודת אתחול נשלחה' };
-            } else {
-                result = { success: false, message: `נכשל בשליחת פקודה: ${clickResult.stderr}` };
+        else if (action === 'power' || action === 'power_long' || action === 'reset') {
+            try {
+                await directPikvmRequest(ip, `/api/atx/click?button=${action}`, 'POST', adminPassword);
+                res.json({ success: true, message: 'הפקודה נשלחה בהצלחה' });
+            } catch (err) {
+                res.json({ success: false, message: `נכשל בשליחת פקודה: ${err.message}` });
             }
         }
         else {
-            result = { success: false, message: `Unknown action: ${action}` };
+            res.status(400).json({ success: false, message: `Unknown action: ${action}` });
         }
-
-        conn.end();
-        res.json(result);
     } catch (err) {
-        if (conn) conn.end();
         console.error('Test ATX component error:', err.message);
         res.status(500).json({ success: false, message: err.message });
     }
@@ -963,6 +1034,9 @@ app.post('/api/setup/run-stage', async (req, res) => {
                 break;
             case 'relativeMouse':
                 result = await stageRelativeMouse(conn);
+                break;
+            case 'configureAtxDelay':
+                result = await stageConfigureAtxDelay(conn, req.body.atxDelay);
                 break;
             case 'disableClosePopup':
                 result = await stageDisableClosePopup(conn);
@@ -1120,52 +1194,67 @@ async function stageReplaceLogo(conn, uploadedLogoBase64) {
 }
 
 // Stage: Set relative mouse mode in override.yaml
+// Stage: Set relative mouse mode in override.yaml
 async function stageRelativeMouse(conn) {
-    const requiredBlock = `kvmd:
-    hid:
-        mouse:
-            absolute: false`;
+    const pythonScript = `import yaml
+try:
+    with open('/etc/kvmd/override.yaml', 'r') as f:
+        data = yaml.safe_load(f) or {}
+except Exception:
+    data = {}
 
-    // Check if override.yaml exists and already has the config
-    const checkResult = await sshExec(conn, 'cat /etc/kvmd/override.yaml 2>/dev/null');
+if 'kvmd' not in data or not isinstance(data['kvmd'], dict):
+    data['kvmd'] = {}
+if 'hid' not in data['kvmd'] or not isinstance(data['kvmd']['hid'], dict):
+    data['kvmd']['hid'] = {}
+if 'mouse' not in data['kvmd']['hid'] or not isinstance(data['kvmd']['hid']['mouse'], dict):
+    data['kvmd']['hid']['mouse'] = {}
+
+data['kvmd']['hid']['mouse']['absolute'] = False
+
+with open('/etc/kvmd/override.yaml', 'w') as f:
+    yaml.safe_dump(data, f, default_flow_style=False)
+`;
+
+    const base64Script = Buffer.from(pythonScript).toString('base64');
+    const updateCmd = `echo '${base64Script}' | base64 -d | python3 -`;
+    const execResult = await sshExec(conn, updateCmd);
     
-    if (checkResult.code === 0 && checkResult.stdout.includes('absolute: false')) {
-        return { success: true, message: 'override.yaml כבר מכיל הגדרת עכבר relative' };
+    if (execResult.code !== 0) {
+        return { success: false, message: `Failed to update override.yaml for mouse: ${execResult.stderr}` };
     }
+    return { success: true, message: 'override.yaml עודכן - עכבר הועבר למצב relative' };
+}
 
-    if (checkResult.code === 0 && checkResult.stdout.trim().length > 0) {
-        // File exists with content - check if it already has kvmd.hid section
-        const existing = checkResult.stdout;
-        if (existing.includes('hid:') && existing.includes('mouse:')) {
-            // Has mouse section but wrong value - use sed to fix
-            const sedResult = await sshExec(conn, "sed -i 's/absolute: true/absolute: false/g' /etc/kvmd/override.yaml");
-            if (sedResult.code !== 0) {
-                return { success: false, message: `Failed to update override.yaml: ${sedResult.stderr}` };
-            }
-            // Verify it was changed
-            const verifyResult = await sshExec(conn, 'cat /etc/kvmd/override.yaml');
-            if (verifyResult.stdout.includes('absolute: false')) {
-                return { success: true, message: 'override.yaml עודכן - עכבר הועבר למצב relative' };
-            }
-        }
-        // Append the block to existing file
-        const appendBase64 = Buffer.from('\n' + requiredBlock + '\n').toString('base64');
-        const appendCmd = `echo '${appendBase64}' | base64 -d >> /etc/kvmd/override.yaml`;
-        const appendResult = await sshExec(conn, appendCmd);
-        if (appendResult.code !== 0) {
-            return { success: false, message: `Failed to append to override.yaml: ${appendResult.stderr}` };
-        }
-    } else {
-        // File doesn't exist or is empty - create it
-        const createBase64 = Buffer.from(requiredBlock + '\n').toString('base64');
-        const createCmd = `echo '${createBase64}' | base64 -d > /etc/kvmd/override.yaml`;
-        const createResult = await sshExec(conn, createCmd);
-        if (createResult.code !== 0) {
-            return { success: false, message: `Failed to create override.yaml: ${createResult.stderr}` };
-        }
+// Stage: Configure ATX long click delay in override.yaml
+async function stageConfigureAtxDelay(conn, delay) {
+    const targetDelay = parseFloat(delay) || 1.0;
+    const pythonScript = `import yaml
+try:
+    with open('/etc/kvmd/override.yaml', 'r') as f:
+        data = yaml.safe_load(f) or {}
+except Exception:
+    data = {}
+
+if 'kvmd' not in data or not isinstance(data['kvmd'], dict):
+    data['kvmd'] = {}
+if 'atx' not in data['kvmd'] or not isinstance(data['kvmd']['atx'], dict):
+    data['kvmd']['atx'] = {}
+
+data['kvmd']['atx']['long_click_delay'] = float(${targetDelay})
+
+with open('/etc/kvmd/override.yaml', 'w') as f:
+    yaml.safe_dump(data, f, default_flow_style=False)
+`;
+
+    const base64Script = Buffer.from(pythonScript).toString('base64');
+    const updateCmd = `echo '${base64Script}' | base64 -d | python3 -`;
+    const execResult = await sshExec(conn, updateCmd);
+    
+    if (execResult.code !== 0) {
+        return { success: false, message: `Failed to configure ATX delay: ${execResult.stderr}` };
     }
-
-    return { success: true, message: 'override.yaml עודכן - עכבר הוגדר למצב relative' };
+    return { success: true, message: `השהיית לחיצה ארוכה הוגדרה ל-${targetDelay} שניות ב-override.yaml` };
 }
 
 // Stage: Disable close popup (page.close.ask = false)
@@ -1416,6 +1505,9 @@ app.post('/api/pikvm/connect', async (req, res) => {
         
         // SSH into the machine and change password
         await changePiKVMPassword(ipAddress, newPassword);
+        
+        // Update the admin password cache so that direct API requests use it immediately
+        adminPasswordCache.set(ipAddress, newPassword);
         
         // Brief wait for services to start restarting
         await new Promise(resolve => setTimeout(resolve, 1000));
