@@ -443,6 +443,11 @@ app.post('/api/users/login', (req, res) => {
     writeDatabase(db);
     logUsage(numericId, availableBox.id, 'connect');
     
+    // Set heartbeat color to red (occupied) asynchronously
+    setPiKVMHeartbeatColor(availableBox.ipAddress, 'red').catch(err => {
+        console.error(`Failed to set heartbeat color to red for ${availableBox.ipAddress}: ${err.message}`);
+    });
+    
     const identityMapping = db.identityMappings.find(m => m.id === numericId);
     
     res.json({
@@ -505,6 +510,11 @@ app.post('/api/users/:id/release', (req, res) => {
     if (box) {
         box.status = 'free';
         delete box.userId;
+        
+        // Reset heartbeat color back to green asynchronously
+        setPiKVMHeartbeatColor(box.ipAddress, 'green').catch(err => {
+            console.error(`Failed to reset heartbeat color to green for ${box.ipAddress}: ${err.message}`);
+        });
     }
     
     // Remove user
@@ -543,6 +553,11 @@ app.delete('/api/users/:id', (req, res) => {
         if (box) {
             box.status = 'free';
             delete box.userId;
+            
+            // Reset heartbeat color back to green asynchronously
+            setPiKVMHeartbeatColor(box.ipAddress, 'green').catch(err => {
+                console.error(`Failed to reset heartbeat color to green for ${box.ipAddress}: ${err.message}`);
+            });
         }
         db.users = db.users.filter(u => u.id !== numericId);
         writeDatabase(db);
@@ -664,6 +679,11 @@ app.post('/api/reset', (req, res) => {
     db.boxes.forEach(box => {
         box.status = 'free';
         delete box.userId;
+        
+        // Reset heartbeat color back to green asynchronously
+        setPiKVMHeartbeatColor(box.ipAddress, 'green').catch(err => {
+            console.error(`Failed to reset heartbeat color to green for ${box.ipAddress}: ${err.message}`);
+        });
     });
     
     // Clear users
@@ -1043,6 +1063,9 @@ app.post('/api/setup/run-stage', async (req, res) => {
                 break;
             case 'installPythonLibs':
                 result = await stageInstallPythonLibs(conn);
+                break;
+            case 'configureHeartbeat':
+                result = await stageConfigureHeartbeat(conn, req.body.heartbeatMode);
                 break;
             case 'changePassword':
                 result = await stageChangePassword(conn, req.body.newPassword);
@@ -1477,6 +1500,206 @@ FallbackNTP=10.253.253.1
         success: true, 
         message: `NTP הופעל עם שרת 10.253.253.1 (סטטוס: ${statusResult.stdout || 'active'})` 
     };
+}
+
+// Stage: Configure Heartbeat LED
+async function stageConfigureHeartbeat(conn, heartbeatMode = 'green_red') {
+    const targetMode = heartbeatMode || 'green_red';
+    
+    // 1. Python heartbeat script contents
+    const pythonScript = `#!/usr/bin/env python3
+import sys
+import time
+import board
+import neopixel
+import os
+import signal
+import argparse
+
+PID_FILE = "/tmp/heartbeat.pid"
+
+def kill_existing():
+    try:
+        if os.path.exists(PID_FILE):
+            with open(PID_FILE, 'r') as f:
+                old_pid = int(f.read().strip())
+            os.kill(old_pid, signal.SIGTERM)
+            time.sleep(0.3)
+    except Exception:
+        pass
+
+def write_pid():
+    try:
+        with open(PID_FILE, 'w') as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--color', type=str, default='green', choices=['green', 'red', 'off'])
+    args = parser.parse_args()
+
+    kill_existing()
+    write_pid()
+
+    # Configure NeoPixel D12
+    try:
+        led = neopixel.NeoPixel(board.D12, 1, pixel_order=neopixel.RGB)
+    except Exception as e:
+        print(f"Error initializing NeoPixel: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    MAX_VAL = 120
+    
+    # Read mode from /etc/kvmd/heartbeat.mode (defaults to green_red if not found)
+    mode = 'green_red'
+    try:
+        if os.path.exists('/etc/kvmd/heartbeat.mode'):
+            with open('/etc/kvmd/heartbeat.mode', 'r') as f:
+                mode = f.read().strip()
+    except Exception:
+        pass
+
+    # Read color overrides from /tmp/heartbeat.color (defaults to green)
+    color = 'green'
+    try:
+        if os.path.exists('/tmp/heartbeat.color'):
+            with open('/tmp/heartbeat.color', 'r') as f:
+                color = f.read().strip()
+    except Exception:
+        pass
+
+    # If argparse got a command line flag, override color
+    if args.color != 'green':
+        color = args.color
+
+    def set_color(val):
+        if mode == 'disabled':
+            led[0] = (0, 0, 0)
+        elif color == 'green':
+            led[0] = (0, val, 0)
+        elif color == 'red':
+            if mode == 'green_red':
+                led[0] = (val, 0, 0)
+            elif mode == 'green_off':
+                led[0] = (0, 0, 0)
+            else:
+                led[0] = (0, val, 0)
+        else:
+            led[0] = (0, 0, 0)
+
+    def handle_exit(signum, frame):
+        set_color(0)
+        sys.exit(0)
+        
+    signal.signal(signal.SIGTERM, handle_exit)
+    signal.signal(signal.SIGINT, handle_exit)
+
+    if mode == 'disabled' or color == 'off':
+        set_color(0)
+        sys.exit(0)
+
+    try:
+        while True:
+            # Pulse 1: Fade up from 0 to MAX_VAL
+            for val in range(0, MAX_VAL + 1, 8):
+                set_color(val)
+                time.sleep(0.015)
+            # Pulse 1: Fade down from MAX_VAL to 20
+            for val in range(MAX_VAL, 19, -8):
+                set_color(val)
+                time.sleep(0.015)
+            # Pulse 2: Fade up from 20 to MAX_VAL
+            for val in range(20, MAX_VAL + 1, 8):
+                set_color(val)
+                time.sleep(0.015)
+            # Pulse 2: Fade down from MAX_VAL to 0
+            for val in range(MAX_VAL, -1, -8):
+                set_color(val)
+                time.sleep(0.015)
+                
+            # Pause
+            set_color(0)
+            time.sleep(1.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        set_color(0)
+
+if __name__ == "__main__":
+    main()
+`;
+
+    // 2. Systemd service file contents
+    const serviceFile = `[Unit]
+Description=PiKVM LED Heartbeat Daemon
+After=kvmd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/heartbeat.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`;
+
+    // 3. Write files using base64 representation to preserve syntax cleanly
+    const base64Script = Buffer.from(pythonScript).toString('base64');
+    const base64Service = Buffer.from(serviceFile).toString('base64');
+    
+    // Write python script
+    const scriptCmd = `echo '${base64Script}' | base64 -d > /usr/local/bin/heartbeat.py && chmod +x /usr/local/bin/heartbeat.py`;
+    const scriptResult = await sshExec(conn, scriptCmd);
+    if (scriptResult.code !== 0) {
+        return { success: false, message: `Failed to write heartbeat script: ${scriptResult.stderr}` };
+    }
+    
+    // Write mode to /etc/kvmd/heartbeat.mode
+    const modeCmd = `echo '${targetMode}' > /etc/kvmd/heartbeat.mode`;
+    const modeResult = await sshExec(conn, modeCmd);
+    if (modeResult.code !== 0) {
+        return { success: false, message: `Failed to write heartbeat mode: ${modeResult.stderr}` };
+    }
+
+    // Write systemd service file
+    const serviceCmd = `echo '${base64Service}' | base64 -d > /etc/systemd/system/heartbeat.service`;
+    const serviceResult = await sshExec(conn, serviceCmd);
+    if (serviceResult.code !== 0) {
+        return { success: false, message: `Failed to write heartbeat service file: ${serviceResult.stderr}` };
+    }
+
+    // Reload systemd daemon, enable and start the service
+    await sshExec(conn, 'systemctl daemon-reload');
+    await sshExec(conn, 'systemctl enable heartbeat');
+    const startResult = await sshExec(conn, 'systemctl restart heartbeat 2>&1');
+    
+    if (startResult.code !== 0) {
+        return { success: false, message: `Failed to start heartbeat service: ${startResult.stderr || startResult.stdout}` };
+    }
+
+    return { 
+        success: true, 
+        message: `שירות פעימות לב (Heartbeat) הוגדר והופעל בהצלחה במצב: ${targetMode}` 
+    };
+}
+
+// Helper: Set heartbeat color on a box asynchronously
+async function setPiKVMHeartbeatColor(ipAddress, color) {
+    let conn;
+    try {
+        conn = await createSshConnection(ipAddress);
+        // Write color to /tmp/heartbeat.color and restart the service
+        // /tmp is a writeable memory partition (tmpfs) so we do not need "rw" mode
+        await sshExec(conn, `echo "${color}" > /tmp/heartbeat.color && systemctl restart heartbeat`);
+        console.log(`Successfully set heartbeat color to ${color} on PiKVM at ${ipAddress}`);
+    } catch (err) {
+        console.error(`Failed to set heartbeat color to ${color} on PiKVM at ${ipAddress}:`, err.message);
+    } finally {
+        if (conn) conn.end();
+    }
 }
 
 // Setup page route

@@ -1115,6 +1115,26 @@
                         </div>
                     </div>
 
+                    <!-- Stage: Configure Heartbeat LED -->
+                    <div class="stage-item checked" data-stage="configureHeartbeat" onclick="toggleStage(this)">
+                        <div class="stage-checkbox">
+                            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                        <div class="stage-icon">💚</div>
+                        <div class="stage-content">
+                            <div class="stage-title">הגדרת Heartbeat LED</div>
+                            <div class="stage-desc">התקנת שירות פעימות לב (Heartbeat) ל-LED של ה-PiKVM</div>
+                            <div class="stage-extra" onclick="event.stopPropagation()">
+                                <label for="heartbeatModeSelect">בחר מצב פעימות לב:</label>
+                                <select id="heartbeatModeSelect" style="width: 100%; padding: 8px; border-radius: 4px; background: var(--bg-card); color: var(--text-color); border: 1px solid var(--border-color); margin-top: 5px;">
+                                    <option value="green_red" selected>ירוק במצב פנוי, אדום במצב תפוס</option>
+                                    <option value="green_off">ירוק במצב פנוי, כבוי במצב תפוס</option>
+                                    <option value="disabled">כבוי לגמרי</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Stage 10: Change Root Password -->
                     <div class="stage-item checked" data-stage="changePassword" onclick="toggleStage(this)">
                         <div class="stage-checkbox">

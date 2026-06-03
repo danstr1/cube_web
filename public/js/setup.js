@@ -52,6 +52,11 @@ const STAGES = {
         name: 'התקנת ספריות Python',
         icon: '🐍'
     },
+    configureHeartbeat: {
+        id: 'configureHeartbeat',
+        name: 'הגדרת Heartbeat LED',
+        icon: '💚'
+    },
     changePassword: {
         id: 'changePassword',
         name: 'שינוי סיסמת root',
@@ -624,6 +629,12 @@ async function executeStage(stageId, currentIp, newIp, allStages) {
     if (stageId === 'configureAtxDelay') {
         const sliderEl = document.getElementById('atxDelaySlider');
         body.atxDelay = sliderEl ? parseFloat(sliderEl.value) : 1.0;
+    }
+
+    // If this is the configureHeartbeat stage, send the selected mode
+    if (stageId === 'configureHeartbeat') {
+        const selectEl = document.getElementById('heartbeatModeSelect');
+        body.heartbeatMode = selectEl ? selectEl.value : 'green_red';
     }
 
     // Create abort controller for skip/timeout support
