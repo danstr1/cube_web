@@ -690,6 +690,7 @@ app.post('/api/clear-history', (req, res) => {
 // ============================================================
 
 const SETUP_DIR = path.join(__dirname, 'public', 'setup');
+const PYTHON_LIB_DIR = path.join(__dirname, 'public', 'pikvm', 'python_lib');
 
 // Read SSH password from file
 function getSetupSshPassword() {
@@ -858,6 +859,9 @@ app.post('/api/setup/run-stage', async (req, res) => {
                 break;
             case 'disableClosePopup':
                 result = await stageDisableClosePopup(conn);
+                break;
+            case 'installPythonLibs':
+                result = await stageInstallPythonLibs(conn);
                 break;
             case 'changePassword':
                 result = await stageChangePassword(conn, req.body.newPassword);
@@ -1095,6 +1099,71 @@ async function stageDisableClosePopup(conn) {
     }
 
     return { success: false, message: 'השינוי לא אומת - ייתכן שהפורמט בקובץ שונה מהצפוי' };
+}
+
+// Stage: Install Python libraries offline
+async function stageInstallPythonLibs(conn) {
+    if (!fs.existsSync(PYTHON_LIB_DIR)) {
+        return { success: false, message: `Local directory not found: ${PYTHON_LIB_DIR}` };
+    }
+
+    let files;
+    try {
+        files = fs.readdirSync(PYTHON_LIB_DIR);
+    } catch (err) {
+        return { success: false, message: `Failed to read local python_lib directory: ${err.message}` };
+    }
+
+    if (files.length === 0) {
+        return { success: false, message: `No library files found in local directory: ${PYTHON_LIB_DIR}` };
+    }
+
+    // Create remote folder /tmp/python_lib
+    const mkdirResult = await sshExec(conn, 'mkdir -p /tmp/python_lib');
+    if (mkdirResult.code !== 0) {
+        return { success: false, message: `Failed to create remote directory: ${mkdirResult.stderr || mkdirResult.stdout}` };
+    }
+
+    // Upload files sequentially
+    for (const file of files) {
+        const localPath = path.join(PYTHON_LIB_DIR, file);
+        const remotePath = `/tmp/python_lib/${file}`;
+        
+        // Skip directories if any
+        if (fs.statSync(localPath).isDirectory()) {
+            continue;
+        }
+
+        try {
+            await sshUploadFile(conn, localPath, remotePath);
+        } catch (err) {
+            // Clean up directory on error
+            await sshExec(conn, 'rm -rf /tmp/python_lib');
+            return { success: false, message: `Failed to upload file ${file}: ${err.message}` };
+        }
+    }
+
+    // Run installation command
+    // Set a long timeout (120000ms) for compiling/installing python packages
+    const installCmd = 'cd /tmp/python_lib && sudo pip3 install --no-index --find-links . adafruit-blinka adafruit-circuitpython-neopixel rpi_ws281x';
+    const installResult = await sshExec(conn, installCmd, 120000).catch(err => {
+        return { code: -1, stderr: err.message, stdout: '' };
+    });
+
+    // Clean up uploaded files in all cases
+    await sshExec(conn, 'rm -rf /tmp/python_lib');
+
+    if (installResult.code !== 0) {
+        return { 
+            success: false, 
+            message: `Installation failed: ${installResult.stderr || installResult.stdout || 'Command failed'}` 
+        };
+    }
+
+    return { 
+        success: true, 
+        message: 'ספריות Python הועתקו והותקנו בהצלחה במערכת' 
+    };
 }
 
 // Stage: Reboot PiKVM

@@ -42,6 +42,11 @@ const STAGES = {
         name: 'בטל חלון קופץ בעת יציאה',
         icon: '🚫'
     },
+    installPythonLibs: {
+        id: 'installPythonLibs',
+        name: 'התקנת ספריות Python',
+        icon: '🐍'
+    },
     changePassword: {
         id: 'changePassword',
         name: 'שינוי סיסמת root',
@@ -595,11 +600,12 @@ async function executeStage(stageId, currentIp, newIp, allStages) {
     currentAbortController = new AbortController();
     const signal = currentAbortController.signal;
 
-    // Auto-timeout after STAGE_TIMEOUT_MS
+    // Auto-timeout after STAGE_TIMEOUT_MS (or longer for python libs installation)
+    const timeoutMs = stageId === 'installPythonLibs' ? 180000 : STAGE_TIMEOUT_MS;
     const timeoutId = setTimeout(() => {
-        addLog(`⏰ חריגת זמן (${STAGE_TIMEOUT_MS / 1000} שניות) - עובר לשלב הבא`, 'warning');
+        addLog(`⏰ חריגת זמן (${timeoutMs / 1000} שניות) - עובר לשלב הבא`, 'warning');
         currentAbortController.abort();
-    }, STAGE_TIMEOUT_MS);
+    }, timeoutMs);
 
     try {
         const response = await fetch('/api/setup/run-stage', {
