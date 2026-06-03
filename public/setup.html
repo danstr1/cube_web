@@ -907,6 +907,52 @@
                 </div>
             </div>
 
+            <!-- Component Testing Card -->
+            <div class="setup-card" id="testingCard" style="display: none;">
+                <h2>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+                    </svg>
+                    בדיקת רכיבי PiKVM (בזמן אמת)
+                </h2>
+
+                <div style="display: flex; gap: 20px; align-items: center; margin-bottom: 20px; padding: 15px; background: rgba(255, 255, 255, 0.03); border-radius: 8px; border: 1px solid var(--glass-border); flex-wrap: wrap;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span>💡 סטטוס מתח (Power):</span>
+                        <span id="powerStatusBadge" class="badge" style="background: rgba(231, 76, 60, 0.2); border: 1px solid var(--danger-color); color: var(--danger-color); padding: 4px 10px; border-radius: 6px; font-size: 0.9rem; font-weight: bold; display: flex; align-items: center; gap: 6px;">
+                            <span style="width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block;"></span>
+                            OFF
+                        </span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span>💽 פעילות דיסק (HDD):</span>
+                        <span id="hddStatusBadge" class="badge" style="background: rgba(255, 255, 255, 0.1); border: 1px solid var(--glass-border); color: var(--text-muted); padding: 4px 10px; border-radius: 6px; font-size: 0.9rem; font-weight: bold; display: flex; align-items: center; gap: 6px;">
+                            <span style="width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block;"></span>
+                            IDLE
+                        </span>
+                    </div>
+                    <button class="btn btn-secondary" onclick="refreshAtxStatus()" id="refreshStatusBtn" style="padding: 6px 12px; font-size: 0.85rem; margin-right: auto;">
+                        🔄 רענן סטטוס
+                    </button>
+                </div>
+
+                <div class="test-buttons-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">
+                    <button class="btn btn-primary" onclick="runComponentTest('led')" id="testLedBtn" style="display: flex; align-items: center; justify-content: center; gap: 8px;">
+                        🐍 בדיקת LED (צבעוני)
+                    </button>
+                    <button class="btn btn-primary" onclick="runComponentTest('power')" id="testPowerBtn" style="background: linear-gradient(135deg, #e67e22, #d35400); border: none; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                        ⚡ לחיצת כפתור הפעלה (0.5s)
+                    </button>
+                    <button class="btn btn-primary" onclick="runComponentTest('power_long')" id="testPowerLongBtn" style="background: linear-gradient(135deg, #c0392b, #962d22); border: none; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                        🛑 לחיצה ארוכה (5s)
+                    </button>
+                    <button class="btn btn-primary" onclick="runComponentTest('reset')" id="testResetBtn" style="background: linear-gradient(135deg, #2980b9, #2471a3); border: none; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                        🔄 כפתור אתחול (Reset)
+                    </button>
+                </div>
+                <div id="testOutputLog" style="margin-top: 15px; font-family: monospace; font-size: 0.85rem; color: var(--text-muted); padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; display: none;"></div>
+            </div>
+
             <!-- Stages Card -->
             <div class="setup-card" id="stagesCard">
                 <h2>

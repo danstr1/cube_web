@@ -277,6 +277,11 @@ async function testConnection() {
 
         if (result.success) {
             showConnectionStatus('success', `חיבור תקין! (${result.message || 'SSH פעיל'})`);
+            const testCard = document.getElementById('testingCard');
+            if (testCard) {
+                testCard.style.display = 'block';
+                startAtxStatusPolling();
+            }
         } else {
             showConnectionStatus('error', result.message || 'החיבור נכשל');
         }
@@ -704,6 +709,13 @@ function resetForm() {
 
     showConnectionStatus('idle', 'הזן כתובת IP ולחץ על "בדוק חיבור"');
 
+    if (atxPollInterval) {
+        clearInterval(atxPollInterval);
+        atxPollInterval = null;
+    }
+    const testCard = document.getElementById('testingCard');
+    if (testCard) testCard.style.display = 'none';
+
     // Reset logo upload
     uploadedLogoBase64 = null;
     setLogoSource('default');
@@ -716,4 +728,124 @@ function resetForm() {
     selectAll();
 
     window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ==============================
+// PiKVM Component Testing
+// ==============================
+let atxPollInterval = null;
+
+function startAtxStatusPolling() {
+    if (atxPollInterval) clearInterval(atxPollInterval);
+    refreshAtxStatus();
+    atxPollInterval = setInterval(refreshAtxStatus, 2000);
+}
+
+async function refreshAtxStatus() {
+    const ip = document.getElementById('currentIp').value.trim();
+    const password = document.getElementById('sshPassword').value.trim();
+    if (!ip || !password) return;
+
+    try {
+        const response = await fetch('/api/setup/test-atx', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip, password, action: 'status' })
+        });
+        const result = await response.json();
+        
+        if (result.success && result.status) {
+            try {
+                const statusObj = JSON.parse(result.status);
+                const resObj = statusObj.result || statusObj;
+                const leds = resObj.leds || {};
+                
+                const power = (leds.power !== undefined) ? leds.power : resObj.power;
+                const hdd = (leds.hdd !== undefined) ? leds.hdd : resObj.hdd;
+                
+                updateStatusUi(!!power, !!hdd);
+            } catch (err) {
+                console.error("Failed to parse ATX status JSON:", err);
+            }
+        }
+    } catch (err) {
+        console.error("Error refreshing ATX status:", err);
+    }
+}
+
+function updateStatusUi(powerOn, hddActive) {
+    const powerBadge = document.getElementById('powerStatusBadge');
+    const hddBadge = document.getElementById('hddStatusBadge');
+    
+    if (powerBadge) {
+        if (powerOn) {
+            powerBadge.style.background = 'rgba(46, 204, 113, 0.2)';
+            powerBadge.style.borderColor = 'var(--secondary-color)';
+            powerBadge.style.color = 'var(--secondary-color)';
+            powerBadge.innerHTML = '<span style="width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; animation: pulse 1.5s infinite;"></span>ON';
+        } else {
+            powerBadge.style.background = 'rgba(231, 76, 60, 0.2)';
+            powerBadge.style.borderColor = 'var(--danger-color)';
+            powerBadge.style.color = 'var(--danger-color)';
+            powerBadge.innerHTML = '<span style="width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block;"></span>OFF';
+        }
+    }
+    
+    if (hddBadge) {
+        if (hddActive) {
+            hddBadge.style.background = 'rgba(243, 156, 18, 0.2)';
+            hddBadge.style.borderColor = 'var(--warning-color)';
+            hddBadge.style.color = 'var(--warning-color)';
+            hddBadge.innerHTML = '<span style="width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; animation: pulse 0.5s infinite;"></span>ACTIVE';
+        } else {
+            hddBadge.style.background = 'rgba(255, 255, 255, 0.05)';
+            hddBadge.style.borderColor = 'var(--glass-border)';
+            hddBadge.style.color = 'var(--text-muted)';
+            hddBadge.innerHTML = '<span style="width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block;"></span>IDLE';
+        }
+    }
+}
+
+async function runComponentTest(action) {
+    const ip = document.getElementById('currentIp').value.trim();
+    const password = document.getElementById('sshPassword').value.trim();
+    if (!ip || !password) {
+        alert('אנא הזן כתובת IP וסיסמה תחילה');
+        return;
+    }
+
+    const logEl = document.getElementById('testOutputLog');
+    if (logEl) {
+        logEl.style.display = 'block';
+        logEl.textContent = 'מריץ בדיקה...';
+        logEl.style.color = 'var(--text-muted)';
+    }
+
+    try {
+        const response = await fetch('/api/setup/test-atx', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip, password, action })
+        });
+        const result = await response.json();
+        
+        if (logEl) {
+            if (result.success) {
+                logEl.textContent = `✅ בדיקה הושלמה: ${result.message || 'הפקודה נשלחה בהצלחה'}`;
+                logEl.style.color = 'var(--secondary-color)';
+                
+                if (action !== 'led') {
+                    setTimeout(refreshAtxStatus, 1000);
+                }
+            } else {
+                logEl.textContent = `❌ שגיאה: ${result.message || 'הפעולה נכשלה'}`;
+                logEl.style.color = 'var(--danger-color)';
+            }
+        }
+    } catch (err) {
+        if (logEl) {
+            logEl.textContent = `❌ שגיאת רשת: ${err.message}`;
+            logEl.style.color = 'var(--danger-color)';
+        }
+    }
 }

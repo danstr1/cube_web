@@ -819,6 +819,113 @@ app.post('/api/setup/test-connection', async (req, res) => {
     }
 });
 
+// Test ATX components endpoint
+app.post('/api/setup/test-atx', async (req, res) => {
+    const { ip, password, action } = req.body;
+    if (!ip || !password || !action) {
+        return res.status(400).json({ success: false, message: 'Missing parameters' });
+    }
+
+    let conn;
+    try {
+        conn = await createSshConnection(ip, password);
+
+        let result;
+        if (action === 'led') {
+            // Write Python script to file
+            const pythonScript = `import time, board, neopixel
+
+led = neopixel.NeoPixel(board.D12, 1, pixel_order=neopixel.RGB)
+
+def set_rgb(r, g, b):
+\tled[0] = (r, g, b)
+\ttime.sleep(0.2)
+
+for i in range(50):
+\tset_rgb(255, 3*i, 0)
+\tset_rgb(0, 255, 3*i)
+\tset_rgb(3*i, 0, 255)
+
+# Turn off LED after test
+led[0] = (0, 0, 0)
+`;
+            // Base64 encode script to upload securely via command line without escaping errors
+            const base64Script = Buffer.from(pythonScript).toString('base64');
+            const uploadCmd = `echo '${base64Script}' | base64 -d > /tmp/test_led.py`;
+            await sshExec(conn, uploadCmd);
+            
+            // Execute python script
+            const execResult = await sshExec(conn, 'python3 /tmp/test_led.py', 60000);
+            
+            // Delete python script
+            await sshExec(conn, 'rm -f /tmp/test_led.py');
+            
+            if (execResult.code !== 0) {
+                result = { success: false, message: `LED test script failed: ${execResult.stderr || execResult.stdout}` };
+            } else {
+                result = { success: true, message: 'בדיקת ה-LED הושלמה בהצלחה (הסתיים הרצת הקוד)' };
+            }
+        } 
+        else if (action === 'status') {
+            // Query ATX status from KVMD socket
+            const statusResult = await sshExec(conn, 'curl -s --unix-socket /run/kvmd/kvmd.sock http://localhost/api/atx');
+            if (statusResult.code === 0) {
+                result = { success: true, status: statusResult.stdout };
+            } else {
+                // Try reading Prometheus endpoint if api/atx fails or is not supported
+                const promResult = await sshExec(conn, 'curl -s http://localhost/api/export/prometheus/metrics');
+                if (promResult.code === 0) {
+                    const powerMetric = promResult.stdout.match(/pikvm_atx_power\s+(\d+)/);
+                    const powerOn = powerMetric ? powerMetric[1] === '1' : false;
+                    result = { 
+                        success: true, 
+                        status: JSON.stringify({ ok: true, result: { power: powerOn, hdd: false } }) 
+                    };
+                } else {
+                    result = { success: false, message: `Failed to query ATX status: ${statusResult.stderr}` };
+                }
+            }
+        }
+        else if (action === 'power') {
+            // Power button click (0.5s)
+            const clickResult = await sshExec(conn, 'curl -s -X POST --unix-socket /run/kvmd/kvmd.sock http://localhost/api/atx/click?button=power');
+            if (clickResult.code === 0) {
+                result = { success: true, message: 'פקודת כפתור הפעלה נשלחה' };
+            } else {
+                result = { success: false, message: `נכשל בשליחת פקודה: ${clickResult.stderr}` };
+            }
+        }
+        else if (action === 'power_long') {
+            // Power button long click (5s)
+            const clickResult = await sshExec(conn, 'curl -s -X POST --unix-socket /run/kvmd/kvmd.sock http://localhost/api/atx/click?button=power_long');
+            if (clickResult.code === 0) {
+                result = { success: true, message: 'פקודת לחיצה ארוכה על כפתור הפעלה נשלחה' };
+            } else {
+                result = { success: false, message: `נכשל בשליחת פקודה: ${clickResult.stderr}` };
+            }
+        }
+        else if (action === 'reset') {
+            // Reset button click
+            const clickResult = await sshExec(conn, 'curl -s -X POST --unix-socket /run/kvmd/kvmd.sock http://localhost/api/atx/click?button=reset');
+            if (clickResult.code === 0) {
+                result = { success: true, message: 'פקודת אתחול נשלחה' };
+            } else {
+                result = { success: false, message: `נכשל בשליחת פקודה: ${clickResult.stderr}` };
+            }
+        }
+        else {
+            result = { success: false, message: `Unknown action: ${action}` };
+        }
+
+        conn.end();
+        res.json(result);
+    } catch (err) {
+        if (conn) conn.end();
+        console.error('Test ATX component error:', err.message);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // Run a setup stage
 app.post('/api/setup/run-stage', async (req, res) => {
     const { stage, currentIp, newIp, password, uploadedLogo, skipNetworkRestart } = req.body;
