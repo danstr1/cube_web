@@ -28,11 +28,17 @@ async function init() {
     const hiveIdParam = urlParams.get('id');
     if (hiveIdParam) {
         currentHiveId = parseInt(hiveIdParam);
+        localStorage.setItem('cube_web_hive_id', currentHiveId);
     } else {
-        // Only load settings if no URL parameter
-        const settings = await apiGet('/api/settings');
-        if (settings && settings.currentHive) {
-            currentHiveId = settings.currentHive;
+        const savedHiveId = localStorage.getItem('cube_web_hive_id');
+        if (savedHiveId) {
+            currentHiveId = parseInt(savedHiveId);
+        } else {
+            // Only load settings if no URL parameter
+            const settings = await apiGet('/api/settings');
+            if (settings && settings.currentHive) {
+                currentHiveId = settings.currentHive;
+            }
         }
     }
     
@@ -598,6 +604,7 @@ async function deleteHive(hiveId) {
 // Select hive
 function selectHive(hiveId) {
     currentHiveId = hiveId;
+    localStorage.setItem('cube_web_hive_id', hiveId);
     window.location.href = `/box?id=${hiveId}`;
 }
 

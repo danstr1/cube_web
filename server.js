@@ -18,7 +18,7 @@ function generateRandomPassword(length = 12) {
 }
 
 // SSH into PiKVM and change password
-async function changePiKVMPassword(ipAddress, newPassword) {
+async function changePiKVMPassword(ipAddress, newPassword, rootPassword = null) {
     return new Promise((resolve, reject) => {
         const conn = new Client();
         
@@ -168,7 +168,7 @@ if __name__ == "__main__":
             host: ipAddress,
             port: 22,
             username: 'root',
-            password: getSetupSshPassword(),
+            password: rootPassword || getSetupSshPassword(),
             readyTimeout: 10000
         });
     });
@@ -414,6 +414,14 @@ app.post('/api/users/login', (req, res) => {
     if (existingUser) {
         const box = db.boxes.find(b => b.id === existingUser.boxId);
         const identityMapping = db.identityMappings.find(m => m.id === numericId);
+        
+        if (box && box.ipAddress) {
+            // Trigger ATX long press click (shutdown) asynchronously
+            triggerPiKVMATXClick(box.ipAddress, 'power_long').catch(err => {
+                console.error(`Failed to trigger ATX power_long for existing user box ${box.ipAddress}: ${err.message}`);
+            });
+        }
+
         return res.json({
             exists: true,
             user: existingUser,
@@ -993,6 +1001,27 @@ app.post('/api/setup/test-atx', async (req, res) => {
                 await directPikvmRequest(ip, `/api/atx/click?button=${action}`, 'POST', adminPassword);
                 res.json({ success: true, message: 'הפקודה נשלחה בהצלחה' });
             } catch (err) {
+                if (err.message && err.message.includes('403')) {
+                    let conn;
+                    try {
+                        conn = await createSshConnection(ip, password);
+                        const checkResult = await sshExec(conn, 'test -f /tmp/web.txt && echo "exists" || echo "missing"');
+                        
+                        // Close connection before changePiKVMPassword creates its own
+                        if (conn) { conn.end(); conn = null; }
+                        
+                        if (checkResult.stdout.trim() === 'missing') {
+                            console.log(`403 Forbidden and /tmp/web.txt missing on ${ip}. Automatically resetting password to 'admin'.`);
+                            await changePiKVMPassword(ip, 'admin', password);
+                            adminPasswordCache.set(ip, 'admin');
+                            return res.json({ success: false, message: 'הקובץ /tmp/web.txt היה חסר. ההרשאות במערכת אופסו אוטומטית ל-admin. אנא נסה שוב.' });
+                        }
+                    } catch (sshErr) {
+                        console.error('Failed to fix /tmp/web.txt automatically:', sshErr.message);
+                    } finally {
+                        if (conn) conn.end();
+                    }
+                }
                 res.json({ success: false, message: `נכשל בשליחת פקודה: ${err.message}` });
             }
         }
@@ -1239,7 +1268,7 @@ with open('/etc/kvmd/override.yaml', 'w') as f:
 
 // Stage: Configure ATX long click delay in override.yaml
 async function stageConfigureAtxDelay(conn, delay) {
-    const targetDelay = parseFloat(delay) || 1.0;
+    const targetDelay = parseFloat(delay) || 0.5;
     const pythonScript = `import yaml
 try:
     with open('/etc/kvmd/override.yaml', 'r') as f:
@@ -1505,6 +1534,8 @@ import signal
 import argparse
 
 PID_FILE = "/tmp/heartbeat.pid"
+last_color = 'green'
+last_mode = 'green_red'
 
 def kill_existing():
     try:
@@ -1524,23 +1555,24 @@ def write_pid():
         pass
 
 def get_current_state():
-    color = 'green'
+    global last_color, last_mode
     try:
         if os.path.exists('/tmp/heartbeat.color'):
             with open('/tmp/heartbeat.color', 'r') as f:
-                color = f.read().strip()
+                c = f.read().strip()
+                if c: last_color = c
     except Exception:
         pass
     
-    mode = 'green_red'
     try:
         if os.path.exists('/etc/kvmd/heartbeat.mode'):
             with open('/etc/kvmd/heartbeat.mode', 'r') as f:
-                mode = f.read().strip()
+                m = f.read().strip()
+                if m: last_mode = m
     except Exception:
         pass
         
-    return color, mode
+    return last_color, last_mode
 
 def main():
     parser = argparse.ArgumentParser()
@@ -1552,7 +1584,7 @@ def main():
 
     # Configure NeoPixel D12
     try:
-        led = neopixel.NeoPixel(board.D12, 1, pixel_order=neopixel.RGB)
+        led = neopixel.NeoPixel(board.D12, 1, pixel_order=neopixel.GRB)
     except Exception as e:
         print(f"Error initializing NeoPixel: {e}", file=sys.stderr)
         sys.exit(1)

@@ -586,6 +586,15 @@ async function runSetup() {
     addLog(`===== סיכום: ${completedCount} הצליחו, ${failedCount} נכשלו מתוך ${totalStages} =====`, 
         failedCount === 0 ? 'success' : 'warning');
 
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('runBtn').classList.remove('running');
+    document.getElementById('runBtn').innerHTML = `
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+        התחל הגדרה
+    `;
+
     isRunning = false;
 }
 
@@ -633,7 +642,7 @@ async function executeStage(stageId, currentIp, newIp, allStages) {
     // If this is the configureAtxDelay stage, send the slider delay value
     if (stageId === 'configureAtxDelay') {
         const sliderEl = document.getElementById('atxDelaySlider');
-        body.atxDelay = sliderEl ? parseFloat(sliderEl.value) : 1.0;
+        body.atxDelay = sliderEl ? parseFloat(sliderEl.value) : 0.5;
     }
 
     // If this is the configureHeartbeat stage, send the default mode
@@ -753,9 +762,9 @@ function resetForm() {
     // Reset ATX delay slider
     const sliderEl = document.getElementById('atxDelaySlider');
     if (sliderEl) {
-        sliderEl.value = '1.0';
+        sliderEl.value = '0.5';
         const labelEl = document.getElementById('delayVal');
-        if (labelEl) labelEl.textContent = '1.0';
+        if (labelEl) labelEl.textContent = '0.5';
     }
 
     // Re-select all stages
