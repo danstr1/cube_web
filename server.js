@@ -941,8 +941,8 @@ app.post('/api/setup/test-atx', async (req, res) => {
             let conn;
             try {
                 conn = await createSshConnection(ip, password);
-                // Write color to /tmp/heartbeat.color (the running heartbeat script reads this dynamically)
-                const cmd = `echo "${color}" > /tmp/heartbeat.color`;
+                // Write color to /tmp/heartbeat.color and restart the service
+                const cmd = `echo "${color}" > /tmp/heartbeat.color && systemctl restart heartbeat`;
                 const result = await sshExec(conn, cmd);
                 if (result.code !== 0) {
                     res.json({ success: false, message: `שינוי מצב LED נכשל: ${result.stderr}` });
@@ -1584,7 +1584,7 @@ def main():
 
     # Configure NeoPixel D12
     try:
-        led = neopixel.NeoPixel(board.D12, 1, pixel_order=neopixel.GRB)
+        led = neopixel.NeoPixel(board.D12, 9, pixel_order=neopixel.GRB)
     except Exception as e:
         print(f"Error initializing NeoPixel: {e}", file=sys.stderr)
         sys.exit(1)
@@ -1602,14 +1602,14 @@ def main():
 
     def set_color(color_name, val):
         if color_name == 'green':
-            led[0] = (0, val, 0)
+            led.fill((0, val, 0))
         elif color_name == 'red':
-            led[0] = (val, 0, 0)
+            led.fill((val, 0, 0))
         else:
-            led[0] = (0, 0, 0)
+            led.fill((0, 0, 0))
 
     def handle_exit(signum, frame):
-        led[0] = (0, 0, 0)
+        led.fill((0, 0, 0))
         sys.exit(0)
         
     signal.signal(signal.SIGTERM, handle_exit)
@@ -1620,7 +1620,7 @@ def main():
             color, mode = get_current_state()
 
             if mode == 'disabled' or color == 'off':
-                led[0] = (0, 0, 0)
+                led.fill((0, 0, 0))
                 time.sleep(0.2)
                 continue
 
@@ -1628,7 +1628,7 @@ def main():
                 state_changed = False
                 for i in range(50):
                     # Cycling Step 1: Red to Yellow
-                    led[0] = (255, 3 * i, 0)
+                    led.fill((255, 3 * i, 0))
                     for _ in range(20):
                         time.sleep(0.01)
                         c, m = get_current_state()
@@ -1638,7 +1638,7 @@ def main():
                     if state_changed: break
 
                     # Cycling Step 2: Green to Cyan
-                    led[0] = (0, 255, 3 * i)
+                    led.fill((0, 255, 3 * i))
                     for _ in range(20):
                         time.sleep(0.01)
                         c, m = get_current_state()
@@ -1648,7 +1648,7 @@ def main():
                     if state_changed: break
 
                     # Cycling Step 3: Blue to Magenta
-                    led[0] = (3 * i, 0, 255)
+                    led.fill((3 * i, 0, 255))
                     for _ in range(20):
                         time.sleep(0.01)
                         c, m = get_current_state()
@@ -1669,7 +1669,7 @@ def main():
                 continue
 
             if color == 'red' and mode == 'green_off':
-                led[0] = (0, 0, 0)
+                led.fill((0, 0, 0))
                 time.sleep(0.2)
                 continue
 
@@ -1727,7 +1727,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        led[0] = (0, 0, 0)
+        led.fill((0, 0, 0))
 
 if __name__ == "__main__":
     main()
@@ -1743,6 +1743,7 @@ Type=simple
 ExecStart=/usr/local/bin/heartbeat.py
 Restart=always
 RestartSec=5
+RuntimeMaxSec=600
 
 [Install]
 WantedBy=multi-user.target
@@ -1793,9 +1794,9 @@ async function setPiKVMHeartbeatColor(ipAddress, color) {
     let conn;
     try {
         conn = await createSshConnection(ipAddress);
-        // Write color to /tmp/heartbeat.color (no service restart needed, the script reads this dynamically)
+        // Write color to /tmp/heartbeat.color and restart the service to immediately apply it
         // /tmp is a writeable memory partition (tmpfs) so we do not need "rw" mode
-        await sshExec(conn, `echo "${color}" > /tmp/heartbeat.color`);
+        await sshExec(conn, `echo "${color}" > /tmp/heartbeat.color && systemctl restart heartbeat`);
         console.log(`Successfully set heartbeat color to ${color} on PiKVM at ${ipAddress}`);
     } catch (err) {
         console.error(`Failed to set heartbeat color to ${color} on PiKVM at ${ipAddress}:`, err.message);
