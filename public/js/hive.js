@@ -457,7 +457,13 @@ async function loadBoxes() {
     
     // Update hive filter select
     const filterSelect = document.getElementById('filterBoxHive');
-    const currentFilter = filterSelect.value;
+    let currentFilter = filterSelect.value;
+    
+    // Auto choose the box (hive) that I came from
+    if (!currentFilter && currentHiveId) {
+        currentFilter = String(currentHiveId);
+    }
+    
     filterSelect.innerHTML = '<option value="">כל הכוורות</option>' + 
         hives.map(h => `<option value="${h.id}">${h.name}</option>`).join('');
     filterSelect.value = currentFilter; // Preserve selection
@@ -535,14 +541,51 @@ async function showBoxDetails(boxId) {
     
     if (!box) return;
     
-    document.getElementById('deleteModalText').innerHTML = `
-        <div style="text-align: right;">
-            <p><strong>תא מספר:</strong> ${box.boxNumber}</p>
-            <p><strong>כתובת IP:</strong> ${box.ipAddress}</p>
-            <p><strong>סטטוס:</strong> ${box.status === 'free' ? 'פנוי' : 'תפוס'}</p>
-        </div>
-        <p style="margin-top: 15px;">האם למחוק את התא?</p>
+    // Find user for unlocking
+    let userId = box.userId;
+    if (box.status === 'occupied' && !userId) {
+        const users = await apiGet('/api/users');
+        const user = users.find(u => u.boxId === box.id);
+        if (user) userId = user.id;
+    }
+    
+    document.getElementById('boxDetailsText').innerHTML = `
+        <p><strong>תא מספר:</strong> ${box.boxNumber}</p>
+        <p><strong>כתובת IP:</strong> ${box.ipAddress}</p>
+        <p><strong>סטטוס:</strong> ${box.status === 'free' ? 'פנוי' : 'תפוס'}</p>
     `;
+
+    let actionsHtml = '';
+    if (box.status === 'occupied' && userId) {
+        const identities = await apiGet('/api/identity-mappings');
+        const identity = identities ? identities.find(m => String(m.id) === String(userId)) : null;
+
+        actionsHtml += `<button class="btn btn-warning" onclick="unlockBox('${userId}', ${identity ? `'${identity.id}'` : 'null'})" style="width: 100%; padding: 12px; margin-bottom: 10px;">שחרר תא (Unlock)</button>`;
+        
+        if (identity) {
+            actionsHtml += `<div style="margin-bottom: 15px; text-align: right; font-size: 0.9rem;">
+                <label style="display: flex; align-items: center; gap: 8px; justify-content: flex-start; cursor: pointer; color: var(--text-color);">
+                    <input type="checkbox" id="removeIdentityCheckbox" style="width: auto;">
+                    <span>מחק גם את מיפוי הזהות (${identity.name})</span>
+                </label>
+            </div>`;
+        } else {
+            actionsHtml += `<div style="margin-bottom: 15px;"></div>`;
+        }
+    }
+    
+    actionsHtml += `<div style="display: flex; justify-content: space-between; align-items: center;">
+        <button class="btn btn-secondary" onclick="closeModal('boxDetailsModal')" style="flex: 1; margin-left: 10px;">סגור</button>
+        <button class="btn btn-danger" onclick="confirmDeleteBox(${box.id})" style="padding: 5px 10px; font-size: 0.8rem; flex: 0 0 auto;">מחק תא</button>
+    </div>`;
+
+    document.getElementById('boxDetailsActions').innerHTML = actionsHtml;
+    openModal('boxDetailsModal');
+}
+
+function confirmDeleteBox(boxId) {
+    closeModal('boxDetailsModal');
+    document.getElementById('deleteModalText').innerHTML = '<p style="text-align: center;">האם אתה בטוח שברצונך למחוק את התא?</p>';
     openModal('deleteModal');
     
     document.getElementById('confirmDeleteBtn').onclick = async () => {
@@ -551,6 +594,24 @@ async function showBoxDetails(boxId) {
         loadBoxes();
         showNotification('התא נמחק בהצלחה', 'success');
     };
+}
+
+async function unlockBox(userId, identityId) {
+    const removeIdentity = identityId && document.getElementById('removeIdentityCheckbox') && document.getElementById('removeIdentityCheckbox').checked;
+
+    const result = await apiPost(`/api/users/${userId}/release`);
+    if (result && result.success) {
+        if (removeIdentity) {
+            await apiDelete(`/api/identity-mappings/${identityId}`);
+            showNotification('התא שוחרר ומיפוי הזהות נמחק בהצלחה', 'success');
+        } else {
+            showNotification('התא שוחרר בהצלחה', 'success');
+        }
+        closeModal('boxDetailsModal');
+        loadBoxes();
+    } else {
+        showNotification('שגיאה בשחרור התא', 'error');
+    }
 }
 
 // Load hives
